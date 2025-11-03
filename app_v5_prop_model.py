@@ -255,7 +255,7 @@ with st.container():
         default_line = 50.0 if selected_prop != "anytime_td" else 0.0
         line_val = st.number_input("Sportsbook Line", value=float(default_line)) if selected_prop != "anytime_td" else 0.0
 
-          if player_name:
+        if player_name:
         # ✅ Anytime TD path
         if selected_prop == "anytime_td":
             rec_row = find_player_in(p_rec, player_name)
