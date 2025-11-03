@@ -296,8 +296,8 @@ with st.container():
 
         player_df_source, fallback_pos = pick_player_df(selected_prop)
         this_player_df = find_player_in(player_df_source, player_name)
-        if (this_player_df is None or this_player_df.empty) and selected_prop == "anytime_td":
-            # For anytime TD we may need both tables
+                # --- FIXED ANYTIME TD LOGIC ---
+        if selected_prop == "anytime_td":
             rec_row = find_player_in(p_rec, player_name)
             rush_row = find_player_in(p_rush, player_name)
             # compute TD rate from both
@@ -312,7 +312,7 @@ with st.container():
                         total_tds += tds
                         total_games = max(total_games, float(df_.iloc[0][games_col]))
             if total_games == 0:
-                st.warning("No games data found for this player.")
+                st.warning("No touchdown data found for this player.")
             else:
                 # Defense context (RB/WR/TE)
                 def_dfs = [d_rb.copy(), d_wr.copy(), d_te.copy()]
@@ -324,8 +324,6 @@ with st.container():
 
                 league_td_pg = np.nanmean([d["tds_pg"].mean() for d in def_dfs])
                 # Opponent is whichever team the player is facing
-                # Determine player's team to infer opponent
-                # (If player's team matches selected_team, opponent is opponent; else selected_team)
                 player_team = None
                 for df_ in [p_rec, p_rush, p_pass]:
                     row_ = find_player_in(df_, player_name)
@@ -344,14 +342,21 @@ with st.container():
 
                 adj_factor = (opp_td_pg / league_td_pg) if league_td_pg and league_td_pg > 0 else 1.0
                 adj_td_rate = (total_tds / total_games) * adj_factor
-                prob_anytime = min(adj_td_rate, 1.0)
-                st.subheader("Anytime TD Probability")
+                # Convert rate to a probability-like metric
+                prob_anytime = 1 - np.exp(-adj_td_rate * 1.2)
+                prob_anytime = float(np.clip(prob_anytime, 0.0, 1.0))
+
+                st.subheader("🏈 Anytime TD Probability")
                 st.write(f"Estimated Anytime TD Probability: **{prob_anytime*100:.1f}%**")
+
                 bar_df = pd.DataFrame(
                     {"Category": ["Player TD Rate", "Adj. vs Opponent"], "TDs/Game": [(total_tds/total_games), adj_td_rate]}
                 )
-                st.plotly_chart(px.bar(bar_df, x="Category", y="TDs/Game", title=f"{player_name} – Anytime TD vs {opp_team_for_player}"), use_container_width=True)
-
+                st.plotly_chart(
+                    px.bar(bar_df, x="Category", y="TDs/Game", title=f"{player_name} – Anytime TD vs {opp_team_for_player}"),
+                    use_container_width=True
+                )
+            # --- END FIXED ANYTIME TD LOGIC ---
         elif this_player_df is None or this_player_df.empty:
             st.warning("Player not found in the selected stat table.")
         else:
