@@ -255,8 +255,8 @@ with st.container():
         default_line = 50.0 if selected_prop != "anytime_td" else 0.0
         line_val = st.number_input("Sportsbook Line", value=float(default_line)) if selected_prop != "anytime_td" else 0.0
 
-      if player_name:
-        # Anytime TD path
+          if player_name:
+        # ✅ Anytime TD path
         if selected_prop == "anytime_td":
             rec_row = find_player_in(p_rec, player_name)
             rush_row = find_player_in(p_rush, player_name)
@@ -270,6 +270,7 @@ with st.container():
                         tds = sum(float(df_.iloc[0][col]) for col in td_cols if pd.notna(df_.iloc[0][col]))
                         total_tds += tds
                         total_games = max(total_games, float(df_.iloc[0][games_col]))
+
             if total_games == 0:
                 st.warning("No touchdown data found for this player.")
             else:
@@ -279,6 +280,7 @@ with st.container():
                         d["games_played"] = 1
                     td_cols = [c for c in d.columns if "td" in c and "allowed" in c]
                     d["tds_pg"] = d[td_cols].sum(axis=1) / d["games_played"].replace(0, np.nan)
+
                 league_td_pg = np.nanmean([d["tds_pg"].mean() for d in def_dfs])
 
                 player_team = None
@@ -287,6 +289,7 @@ with st.container():
                     if row_ is not None and not row_.empty and "team" in row_.columns:
                         player_team = str(row_.iloc[0]["team"])
                         break
+
                 opp_team_for_player = opponent if str(player_team).lower() == str(selected_team).lower() else selected_team
 
                 opp_td_list = []
@@ -318,7 +321,7 @@ with st.container():
                     use_container_width=True,
                 )
 
-        # Normal prop path
+        # ✅ Normal prop path
         else:
             player_df_source, fallback_pos = (
                 (p_rec, "wr")
