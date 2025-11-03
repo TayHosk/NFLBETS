@@ -306,4 +306,12 @@ with st.container():
                 st.write(f"Estimated Anytime TD Probability: **{prob_anytime*100:.1f}%**")
 
                 bar_df = pd.DataFrame({"Category": ["Player TD Rate", "Adj. TD Rate"], "TDs/Game": [(total_tds/total_games), adj_td_rate]})
-                st.plotly_chart(px.bar(bar_df, x="Category", y="TDs/Game", title=f"{player_name} – Anytime TD Probability"), use_container
+                st.plotly_chart(
+                    px.bar(
+                        bar_df,
+                        x="Category",
+                        y="TDs/Game",
+                        title=f"{player_name} – Anytime TD Probability",
+                    ),
+                    use_container_width=True,
+                )
