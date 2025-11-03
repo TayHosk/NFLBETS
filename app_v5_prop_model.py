@@ -35,7 +35,7 @@ page = st.sidebar.radio(
     key="page"
 )
 st.sidebar.markdown("---")
-st.sidebar.caption("NFL Data Model – v9.1 (Edges + Cross-Link Fix)")
+st.sidebar.caption("NFL Data Model – v9.2 (Edges + Cross-Link Fix)")
 
 # ======================================================
 # Shared helper
@@ -245,7 +245,7 @@ elif page == "📈 NFL Game Predictor":
         if st.button("🔗 View Player Props for This Matchup"):
             st.session_state.link_player_teams=(t,o)
             st.session_state.next_page="🏈 Player Prop Model"
-            st.experimental_rerun()
+            st.rerun()
 
     # --- Top Edges ---
     st.markdown("### 📊 Top Edges of the Week")
