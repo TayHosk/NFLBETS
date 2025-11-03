@@ -245,15 +245,31 @@ with st.container():
         })
     edges_df = pd.DataFrame(rows)
     if not edges_df.empty:
-        # Rank by absolute edge (take the larger of total/spread edge per row)
-        def edge_rank(row):
-            vals = [abs(v) for v in [row.get("Total Edge (pts)"), row.get("Spread Edge (pts)")] if pd.notna(v)]
-            return max(vals) if vals else 0.0
-        edges_df["Abs Edge"] = edges_df.apply(edge_rank, axis=1)
-        edges_df = edges_df.sort_values("Abs Edge", ascending=False).drop(columns=["Abs Edge"])
-        st.dataframe(edges_df, use_container_width=True)
+    # Rank by absolute edge (take the larger of total/spread edge per row)
+    def edge_rank(row):
+        vals = [abs(v) for v in [row.get("Total Edge (pts)"), row.get("Spread Edge (pts)")] if pd.notna(v)]
+        return max(vals) if vals else 0.0
+    edges_df["Abs Edge"] = edges_df.apply(edge_rank, axis=1)
+
+    # Sort by largest edge first
+    edges_df = edges_df.sort_values("Abs Edge", ascending=False)
+
+    # 🔵 Color-coding function
+    def highlight_edges(val):
+        color = ""
+        if pd.notna(val):
+            if val >= 3.0:
+                color = "background-color: #4CAF50; color: white"   # Green
+            elif val >= 1.5:
+                color = "background-color: #FFEB3B; color: black"   # Yellow
+            else:
+                color = "background-color: #F44336; color: white"   # Red
+        return color
+
+    styled_edges = edges_df.drop(columns=["Abs Edge"]).style.applymap(highlight_edges, subset=["Total Edge (pts)", "Spread Edge (pts)"])
+    st.dataframe(styled_edges, use_container_width=True)
     else:
-        st.info("No games found for this week.")
+    st.info("No games found for this week.")
 
 # -------------------------
 # 4) Player Props (players from both teams)
