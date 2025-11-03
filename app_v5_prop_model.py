@@ -307,4 +307,4 @@ with st.container():
         else:
             # Normal props flow (untouched)
             player_pos = this_player_df.iloc[0].get("position", fallback_pos)
-            stat_col = detect_stat_col(this_player_df, selected_prop
+            stat_col = detect_stat_col(this_player_df, selected_prop)
