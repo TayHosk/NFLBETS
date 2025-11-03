@@ -296,8 +296,7 @@ with st.container():
 
         player_df_source, fallback_pos = pick_player_df(selected_prop)
         this_player_df = find_player_in(player_df_source, player_name)
-        if (this_player_df is None or this_player_df.empty) and selected_prop == "anytime_td":
-            # For anytime TD we may need both tables
+        if selected_prop == "anytime_td":            # For anytime TD we may need both tables
             rec_row = find_player_in(p_rec, player_name)
             rush_row = find_player_in(p_rush, player_name)
             # compute TD rate from both
