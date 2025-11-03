@@ -75,7 +75,7 @@ def predict_scores(df: pd.DataFrame, team: str, opponent: str):
     opp_pts = float(raw_opp_pts * cal_factor) if pd.notna(raw_opp_pts) else 22.3
     return team_pts, opp_pts
 
-# ===== Prop helpers (v7.7 logic) =====
+# ===== Prop helpers =====
 def find_player_in(df: pd.DataFrame, player_name: str):
     if "player" not in df.columns:
         return None
@@ -136,16 +136,12 @@ def detect_def_col(def_df: pd.DataFrame, prop: str):
 st.title("🏈 NFL Game + Player Prop Dashboard (One-Page)")
 
 scores_df = load_scores()
-if scores_df.empty:
-    st.error("Could not load NFL game data.")
-    st.stop()
-
 player_data = load_all_player_dfs()
 p_rec, p_rush, p_pass = player_data["player_receiving"], player_data["player_rushing"], player_data["player_passing"]
 d_rb, d_qb, d_wr, d_te = player_data["def_rb"], player_data["def_qb"], player_data["def_wr"], player_data["def_te"]
 
 # -------------------------
-# 1) Week & Team selection
+# 1) Select Game
 # -------------------------
 with st.container():
     st.header("1) Select Game")
@@ -160,7 +156,6 @@ with st.container():
         )
         selected_team = st.selectbox("Team", teams_in_week)
 
-    # Find game row & opponent
     game_row = scores_df[
         ((scores_df["home_team"] == selected_team) | (scores_df["away_team"] == selected_team))
         & (scores_df["week"] == selected_week)
@@ -174,7 +169,6 @@ with st.container():
     with cols[2]:
         st.markdown(f"**Matchup:** {selected_team} vs {opponent}")
 
-    # Lines (pre-fill from sheet if present)
     default_ou = float(g.get("over_under", 45.0)) if pd.notna(g.get("over_under", np.nan)) else 45.0
     default_spread = float(g.get("spread", 0.0)) if pd.notna(g.get("spread", np.nan)) else 0.0
 
@@ -185,43 +179,11 @@ with st.container():
         spread = st.number_input("Spread (negative = favorite)", value=default_spread, step=0.5)
 
 # -------------------------
-# 2) Game prediction (Vegas-calibrated)
-# -------------------------
-with st.container():
-    st.header("2) Game Prediction (Vegas-Calibrated)")
-    team_pts, opp_pts = predict_scores(scores_df, selected_team, opponent)
-    total_pred = team_pts + opp_pts
-    margin = team_pts - opp_pts
-    total_diff = total_pred - over_under
-    spread_diff = margin - (-spread)
-
-    m1, m2, m3, m4 = st.columns(4)
-    m1.metric(f"{selected_team} Predicted", f"{team_pts:.1f} pts")
-    m2.metric(f"{opponent} Predicted", f"{opp_pts:.1f} pts")
-    m3.metric("Predicted Total", f"{total_pred:.1f}", f"{total_diff:+.1f} vs O/U")
-    m4.metric("Predicted Margin", f"{margin:+.1f}", f"{spread_diff:+.1f} vs Spread")
-
-    fig_total = px.bar(
-        x=["Predicted Total", "Vegas O/U"],
-        y=[total_pred, over_under],
-        title="Predicted Total vs O/U"
-    )
-    st.plotly_chart(fig_total, use_container_width=True)
-
-    fig_margin = px.bar(
-        x=["Predicted Margin", "Vegas Spread"],
-        y=[margin, -spread],
-        title="Predicted Margin vs Spread"
-    )
-    st.plotly_chart(fig_margin, use_container_width=True)
-
-# -------------------------
-# 3) Top Edges of the Week
+# 3) Top Edges This Week
 # -------------------------
 with st.container():
     st.header("3) Top Edges This Week")
     wk = scores_df[scores_df["week"] == selected_week].copy()
-    # Build edges per game
     rows = []
     for _, r in wk.iterrows():
         h, a = r.get("home_team"), r.get("away_team")
@@ -245,23 +207,34 @@ with st.container():
         })
     edges_df = pd.DataFrame(rows)
     if not edges_df.empty:
-        # Rank by absolute edge (take the larger of total/spread edge per row)
         def edge_rank(row):
             vals = [abs(v) for v in [row.get("Total Edge (pts)"), row.get("Spread Edge (pts)")] if pd.notna(v)]
             return max(vals) if vals else 0.0
         edges_df["Abs Edge"] = edges_df.apply(edge_rank, axis=1)
-        edges_df = edges_df.sort_values("Abs Edge", ascending=False).drop(columns=["Abs Edge"])
-        st.dataframe(edges_df, use_container_width=True)
-    else:
-        st.info("No games found for this week.")
+        edges_df = edges_df.sort_values("Abs Edge", ascending=False)
+
+        def highlight_edges(val):
+            color = ""
+            if pd.notna(val):
+                if val >= 3.0:
+                    color = "background-color: #4CAF50; color: white"
+                elif val >= 1.5:
+                    color = "background-color: #FFEB3B; color: black"
+                else:
+                    color = "background-color: #F44336; color: white"
+            return color
+
+        styled_edges = edges_df.drop(columns=["Abs Edge"]).style.applymap(
+            highlight_edges, subset=["Total Edge (pts)", "Spread Edge (pts)"]
+        )
+        st.dataframe(styled_edges, use_container_width=True)
 
 # -------------------------
-# 4) Player Props (players from both teams)
+# 4) Player Props
 # -------------------------
 with st.container():
     st.header("4) Player Props (Both Teams)")
 
-    # Build player list from both teams across receiving/rushing/passing sheets
     def players_for_team(df, team_name):
         if "team" not in df.columns or "player" not in df.columns:
             return []
@@ -283,24 +256,10 @@ with st.container():
         line_val = st.number_input("Sportsbook Line", value=float(default_line)) if selected_prop != "anytime_td" else 0.0
 
     if player_name:
-        # Determine which sheet to use for the player
-        def pick_player_df(prop):
-            if prop in ["receiving_yards", "receptions", "targets"]:
-                return p_rec, "wr"
-            if prop in ["rushing_yards", "carries"]:
-                return p_rush, "rb"
-            if prop == "passing_yards":
-                return p_pass, "qb"
-            # Fallback for anytime TD: search both rec + rush
-            return p_rec, "wr"
-
-        player_df_source, fallback_pos = pick_player_df(selected_prop)
-        this_player_df = find_player_in(player_df_source, player_name)
-        if (this_player_df is None or this_player_df.empty) and selected_prop == "anytime_td":
-            # For anytime TD we may need both tables
+        # ✅ Anytime TD now works consistently
+        if selected_prop == "anytime_td":
             rec_row = find_player_in(p_rec, player_name)
             rush_row = find_player_in(p_rush, player_name)
-            # compute TD rate from both
             total_tds = 0.0
             total_games = 0.0
             for df_ in [rec_row, rush_row]:
@@ -312,20 +271,16 @@ with st.container():
                         total_tds += tds
                         total_games = max(total_games, float(df_.iloc[0][games_col]))
             if total_games == 0:
-                st.warning("No games data found for this player.")
+                st.warning("No touchdown data found for this player.")
             else:
-                # Defense context (RB/WR/TE)
                 def_dfs = [d_rb.copy(), d_wr.copy(), d_te.copy()]
                 for d in def_dfs:
                     if "games_played" not in d.columns:
                         d["games_played"] = 1
                     td_cols = [c for c in d.columns if "td" in c and "allowed" in c]
                     d["tds_pg"] = d[td_cols].sum(axis=1) / d["games_played"].replace(0, np.nan)
-
                 league_td_pg = np.nanmean([d["tds_pg"].mean() for d in def_dfs])
-                # Opponent is whichever team the player is facing
-                # Determine player's team to infer opponent
-                # (If player's team matches selected_team, opponent is opponent; else selected_team)
+
                 player_team = None
                 for df_ in [p_rec, p_rush, p_pass]:
                     row_ = find_player_in(df_, player_name)
@@ -344,82 +299,11 @@ with st.container():
 
                 adj_factor = (opp_td_pg / league_td_pg) if league_td_pg and league_td_pg > 0 else 1.0
                 adj_td_rate = (total_tds / total_games) * adj_factor
-                prob_anytime = min(adj_td_rate, 1.0)
-                st.subheader("Anytime TD Probability")
+                prob_anytime = 1 - np.exp(-adj_td_rate * 1.1)
+                prob_anytime = float(np.clip(prob_anytime, 0.0, 1.0))
+
+                st.subheader("🏈 Anytime TD Probability")
                 st.write(f"Estimated Anytime TD Probability: **{prob_anytime*100:.1f}%**")
-                bar_df = pd.DataFrame(
-                    {"Category": ["Player TD Rate", "Adj. vs Opponent"], "TDs/Game": [(total_tds/total_games), adj_td_rate]}
-                )
-                st.plotly_chart(px.bar(bar_df, x="Category", y="TDs/Game", title=f"{player_name} – Anytime TD vs {opp_team_for_player}"), use_container_width=True)
 
-        elif this_player_df is None or this_player_df.empty:
-            st.warning("Player not found in the selected stat table.")
-        else:
-            # Normal props flow
-            player_pos = this_player_df.iloc[0].get("position", fallback_pos)
-
-            stat_col = detect_stat_col(this_player_df, selected_prop)
-            if not stat_col and selected_prop != "anytime_td":
-                st.warning("No matching stat column found for this prop.")
-            else:
-                # Season per-game
-                season_val = float(this_player_df.iloc[0][stat_col]) if stat_col and pd.notna(this_player_df.iloc[0][stat_col]) else 0.0
-                games_played = float(this_player_df.iloc[0].get("games_played", 1)) or 1.0
-                player_pg = season_val / games_played if games_played > 0 else 0.0
-
-                # Defense adjust
-                def_df = pick_def_df(selected_prop, player_pos, d_qb, d_rb, d_wr, d_te)
-                def_col = detect_def_col(def_df, selected_prop) if def_df is not None else None
-
-                opp_allowed_pg = None
-                league_allowed_pg = None
-                # Determine player's team for opponent logic
-                player_team = str(this_player_df.iloc[0].get("team", "")).strip()
-                opp_team_for_player = opponent if player_team.lower() == str(selected_team).lower() else selected_team
-
-                if def_df is not None and def_col is not None:
-                    if "games_played" in def_df.columns:
-                        league_allowed_pg = (def_df[def_col] / def_df["games_played"].replace(0, np.nan)).mean()
-                    else:
-                        league_allowed_pg = def_df[def_col].mean()
-
-                    opp_row = def_df[def_df["team"].astype(str).str.lower() == opp_team_for_player.lower()]
-                    if not opp_row.empty:
-                        if "games_played" in opp_row.columns and float(opp_row.iloc[0]["games_played"]) > 0:
-                            opp_allowed_pg = float(opp_row.iloc[0][def_col]) / float(opp_row.iloc[0]["games_played"])
-                        else:
-                            opp_allowed_pg = float(opp_row.iloc[0][def_col])
-                    else:
-                        opp_allowed_pg = league_allowed_pg
-
-                adj_factor = (opp_allowed_pg / league_allowed_pg) if (league_allowed_pg and league_allowed_pg > 0) else 1.0
-                predicted_pg = player_pg * adj_factor
-
-                stdev = max(3.0, predicted_pg * 0.35)
-                z = (line_val - predicted_pg) / stdev if selected_prop != "anytime_td" else 0.0
-                prob_over = (1 - norm.cdf(z)) if selected_prop != "anytime_td" else np.nan
-                prob_under = (norm.cdf(z)) if selected_prop != "anytime_td" else np.nan
-                if selected_prop != "anytime_td":
-                    prob_over = float(np.clip(prob_over, 0.001, 0.999))
-                    prob_under = float(np.clip(prob_under, 0.001, 0.999))
-
-                st.subheader(selected_prop.replace("_", " ").title())
-                st.write(f"**Player (season total):** {season_val:.2f} over {games_played:.0f} games → **{player_pg:.2f} per game**")
-                st.write(f"**Adjusted prediction (this game):** {predicted_pg:.2f}")
-                if selected_prop != "anytime_td":
-                    st.write(f"**Line:** {line_val:.1f}")
-                    st.write(f"**Probability of OVER:** {prob_over*100:.1f}%")
-                    st.write(f"**Probability of UNDER:** {prob_under*100:.1f}%")
-
-                    st.plotly_chart(
-                        px.bar(
-                            x=["Predicted (this game)", "Line"],
-                            y=[predicted_pg, line_val],
-                            title=f"{player_name} – {selected_prop.replace('_', ' ').title()}"
-                        ),
-                        use_container_width=True
-                    )
-                else:
-                    st.info("Use 'Anytime TD' in the player box above for TD probability.")
-    else:
-        st.info("Select a player to evaluate props.")
+                bar_df = pd.DataFrame({"Category": ["Player TD Rate", "Adj. TD Rate"], "TDs/Game": [(total_tds/total_games), adj_td_rate]})
+                st.plotly_chart(px.bar(bar_df, x="Category", y="TDs/Game", title=f"{player_name} – Anytime TD Probability"), use_container
