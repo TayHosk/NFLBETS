@@ -312,6 +312,8 @@ with st.container():
                         total_games = max(total_games, float(df_.iloc[0][games_col]))
             if total_games == 0:
                 st.warning("No games data found for this player.")
+                # 🟢 NEW LINE ADDED HERE
+            st.write(f"**Season TDs:** {int(total_tds)} in {int(total_games)} games")
             else:
                 # Defense context (RB/WR/TE)
                 def_dfs = [d_rb.copy(), d_wr.copy(), d_te.copy()]
