@@ -255,8 +255,8 @@ with st.container():
         default_line = 50.0 if selected_prop != "anytime_td" else 0.0
         line_val = st.number_input("Sportsbook Line", value=float(default_line)) if selected_prop != "anytime_td" else 0.0
 
-    if player_name:
-        # ✅ Anytime TD now works consistently
+      if player_name:
+        # Anytime TD path
         if selected_prop == "anytime_td":
             rec_row = find_player_in(p_rec, player_name)
             rush_row = find_player_in(p_rush, player_name)
@@ -305,7 +305,9 @@ with st.container():
                 st.subheader("🏈 Anytime TD Probability")
                 st.write(f"Estimated Anytime TD Probability: **{prob_anytime*100:.1f}%**")
 
-                bar_df = pd.DataFrame({"Category": ["Player TD Rate", "Adj. TD Rate"], "TDs/Game": [(total_tds/total_games), adj_td_rate]})
+                bar_df = pd.DataFrame(
+                    {"Category": ["Player TD Rate", "Adj. TD Rate"], "TDs/Game": [(total_tds / total_games), adj_td_rate]}
+                )
                 st.plotly_chart(
                     px.bar(
                         bar_df,
@@ -315,3 +317,76 @@ with st.container():
                     ),
                     use_container_width=True,
                 )
+
+        # Normal prop path
+        else:
+            player_df_source, fallback_pos = (
+                (p_rec, "wr")
+                if selected_prop in ["receiving_yards", "receptions", "targets"]
+                else (p_rush, "rb")
+                if selected_prop in ["rushing_yards", "carries"]
+                else (p_pass, "qb")
+            )
+            this_player_df = find_player_in(player_df_source, player_name)
+
+            if this_player_df is None or this_player_df.empty:
+                st.warning("Player not found in the selected stat table.")
+            else:
+                player_pos = this_player_df.iloc[0].get("position", fallback_pos)
+                stat_col = detect_stat_col(this_player_df, selected_prop)
+                if not stat_col:
+                    st.warning("No matching stat column found for this prop.")
+                else:
+                    season_val = float(this_player_df.iloc[0][stat_col]) if pd.notna(this_player_df.iloc[0][stat_col]) else 0.0
+                    games_played = float(this_player_df.iloc[0].get("games_played", 1)) or 1.0
+                    player_pg = season_val / games_played if games_played > 0 else 0.0
+
+                    def_df = pick_def_df(selected_prop, player_pos, d_qb, d_rb, d_wr, d_te)
+                    def_col = detect_def_col(def_df, selected_prop) if def_df is not None else None
+
+                    opp_allowed_pg, league_allowed_pg = None, None
+                    player_team = str(this_player_df.iloc[0].get("team", "")).strip()
+                    opp_team_for_player = opponent if player_team.lower() == str(selected_team).lower() else selected_team
+
+                    if def_df is not None and def_col is not None:
+                        if "games_played" in def_df.columns:
+                            league_allowed_pg = (def_df[def_col] / def_df["games_played"].replace(0, np.nan)).mean()
+                        else:
+                            league_allowed_pg = def_df[def_col].mean()
+
+                        opp_row = def_df[def_df["team"].astype(str).str.lower() == opp_team_for_player.lower()]
+                        if not opp_row.empty:
+                            if "games_played" in opp_row.columns and float(opp_row.iloc[0]["games_played"]) > 0:
+                                opp_allowed_pg = float(opp_row.iloc[0][def_col]) / float(opp_row.iloc[0]["games_played"])
+                            else:
+                                opp_allowed_pg = float(opp_row.iloc[0][def_col])
+                        else:
+                            opp_allowed_pg = league_allowed_pg
+
+                    adj_factor = (opp_allowed_pg / league_allowed_pg) if (league_allowed_pg and league_allowed_pg > 0) else 1.0
+                    predicted_pg = player_pg * adj_factor
+
+                    stdev = max(3.0, predicted_pg * 0.35)
+                    z = (line_val - predicted_pg) / stdev
+                    prob_over = 1 - norm.cdf(z)
+                    prob_under = norm.cdf(z)
+                    prob_over = float(np.clip(prob_over, 0.001, 0.999))
+                    prob_under = float(np.clip(prob_under, 0.001, 0.999))
+
+                    st.subheader(selected_prop.replace("_", " ").title())
+                    st.write(f"**Player (season total):** {season_val:.2f} over {games_played:.0f} games → **{player_pg:.2f} per game**")
+                    st.write(f"**Adjusted prediction (this game):** {predicted_pg:.2f}")
+                    st.write(f"**Line:** {line_val:.1f}")
+                    st.write(f"**Probability of OVER:** {prob_over*100:.1f}%")
+                    st.write(f"**Probability of UNDER:** {prob_under*100:.1f}%")
+
+                    st.plotly_chart(
+                        px.bar(
+                            x=["Predicted (this game)", "Line"],
+                            y=[predicted_pg, line_val],
+                            title=f"{player_name} – {selected_prop.replace('_', ' ').title()}",
+                        ),
+                        use_container_width=True,
+                    )
+    else:
+        st.info("Select a player to evaluate props.")
