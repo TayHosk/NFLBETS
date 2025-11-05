@@ -110,6 +110,7 @@ CODE_TO_FULLNAME = {
     "NYJ": "New York Jets", "PHI": "Philadelphia Eagles", "PIT": "Pittsburgh Steelers", "SEA": "Seattle Seahawks",
     "SF": "San Francisco 49ers", "TB": "Tampa Bay Buccaneers", "TEN": "Tennessee Titans", "WAS": "Washington Commanders"
 }
+FULLNAME_TO_CODE = {v: k for k, v in CODE_TO_FULLNAME.items()}
 
 def team_key(name: str) -> str:
     """Map any team string (full, nickname, abbreviation) to a canonical 2–3 letter code."""
@@ -241,6 +242,174 @@ def detect_def_col(def_df: pd.DataFrame, prop: str):
         if "allowed" in nc:
             return cols[i]
     return None
+
+def prop_prediction_and_probs(
+    player_name: str,
+    selected_prop: str,
+    line_val: float,
+    selected_team_key: str,
+    opponent_key: str,
+    p_rec: pd.DataFrame,
+    p_rush: pd.DataFrame,
+    p_pass: pd.DataFrame,
+    d_qb: pd.DataFrame,
+    d_rb: pd.DataFrame,
+    d_wr: pd.DataFrame,
+    d_te: pd.DataFrame,
+    opponent_key_override: str = None
+):
+    """Return dict with predicted_pg, prob_over, prob_under (non-TD) or prob_anytime (TD).
+       If opponent_key_override is given, use that defense regardless of selected game."""
+    def pick_player_df(prop):
+        if prop in ["receiving_yards", "receptions", "targets"]:
+            return p_rec, "wr"
+        if prop in ["rushing_yards", "carries"]:
+            return p_rush, "rb"
+        if prop == "passing_yards":
+            return p_pass, "qb"
+        return p_rec, "wr"
+
+    # Anytime TD calculation
+    if selected_prop == "anytime_td":
+        rec_row = find_player_in(p_rec, player_name)
+        rush_row = find_player_in(p_rush, player_name)
+        total_tds = 0.0
+        total_games = 0.0
+        for df_ in [rec_row, rush_row]:
+            if df_ is not None and not df_.empty:
+                td_cols = [c for c in df_.columns if "td" in c and "allowed" not in c]
+                games_col = "games_played" if "games_played" in df_.columns else None
+                if td_cols and games_col:
+                    tds = sum(float(df_.iloc[0][col]) for col in td_cols if pd.notna(df_.iloc[0][col]))
+                    total_tds += tds
+                    total_games = max(total_games, float(df_.iloc[0][games_col]))
+        if total_games == 0:
+            return {"error": "No touchdown data found for this player."}
+        def_dfs = [d_rb.copy(), d_wr.copy(), d_te.copy()]
+        for d in def_dfs:
+            if "games_played" not in d.columns:
+                d["games_played"] = 1
+            td_cols = [c for c in d.columns if "td" in c and "allowed" in c]
+            d["tds_pg"] = d[td_cols].sum(axis=1) / d["games_played"].replace(0, np.nan)
+            if "team_key" not in d.columns:
+                d["team_key"] = d["team"].apply(team_key)
+        league_td_pg = np.nanmean([d["tds_pg"].mean() for d in def_dfs])
+        # determine player's team key
+        player_team_key = None
+        for df_ in [p_rec, p_rush, p_pass]:
+            row_ = find_player_in(df_, player_name)
+            if row_ is not None and not row_.empty:
+                tk = row_.iloc[0].get("team_key", "")
+                if tk:
+                    player_team_key = tk
+                    break
+        if not player_team_key:
+            player_team_key = selected_team_key
+        # determine opponent
+        if opponent_key_override:
+            opp_key_for_player = opponent_key_override
+        else:
+            opp_key_for_player = opponent_key if player_team_key == selected_team_key else selected_team_key
+        opp_td_list = []
+        for d in def_dfs:
+            mask = d["team_key"] == opp_key_for_player
+            opp_td_list.append(d.loc[mask, "tds_pg"].mean())
+        opp_td_pg = np.nanmean(opp_td_list)
+        if np.isnan(opp_td_pg):
+            opp_td_pg = league_td_pg
+        adj_factor = (opp_td_pg / league_td_pg) if league_td_pg and league_td_pg > 0 else 1.0
+        adj_td_rate = (total_tds / total_games) * adj_factor
+        prob_anytime = 1 - np.exp(-adj_td_rate)
+        prob_anytime = float(np.clip(prob_anytime, 0.0, 1.0))
+        return {"prob_anytime": prob_anytime, "adj_rate": adj_td_rate, "player_rate": (total_tds/total_games)}
+
+    # Non-TD props
+    player_df_source, fallback_pos = pick_player_df(selected_prop)
+    this_player_df = find_player_in(player_df_source, player_name)
+    if this_player_df is None or this_player_df.empty:
+        return {"error": "Player not found in the selected stat table."}
+
+    player_pos = this_player_df.iloc[0].get("position", fallback_pos)
+    stat_col = detect_stat_col(this_player_df, selected_prop)
+    if not stat_col:
+        return {"error": "No matching stat column found for this prop."}
+
+    season_val = float(this_player_df.iloc[0][stat_col]) if pd.notna(this_player_df.iloc[0][stat_col]) else 0.0
+    games_played = float(this_player_df.iloc[0].get("games_played", 1)) or 1.0
+    player_pg = season_val / games_played if games_played > 0 else 0.0
+
+    def_df = pick_def_df(selected_prop, player_pos, d_qb, d_rb, d_wr, d_te)
+    def_col = detect_def_col(def_df, selected_prop) if def_df is not None else None
+
+    player_team_key = str(this_player_df.iloc[0].get("team_key", "")).strip()
+    if opponent_key_override:
+        opp_key_for_player = opponent_key_override
+    else:
+        opp_key_for_player = opponent_key if player_team_key == selected_team_key else selected_team_key
+
+    opp_allowed_pg = None
+    league_allowed_pg = None
+    if def_df is not None and def_col is not None:
+        if "team_key" not in def_df.columns:
+            def_df["team_key"] = def_df["team"].apply(team_key)
+
+        if "games_played" in def_df.columns:
+            league_allowed_pg = (def_df[def_col] / def_df["games_played"].replace(0, np.nan)).mean()
+        else:
+            league_allowed_pg = def_df[def_col].mean()
+
+        opp_row = def_df[def_df["team_key"] == opp_key_for_player]
+        if not opp_row.empty:
+            if "games_played" in opp_row.columns and float(opp_row.iloc[0]["games_played"]) > 0:
+                opp_allowed_pg = float(opp_row.iloc[0][def_col]) / float(opp_row.iloc[0]["games_played"])
+            else:
+                opp_allowed_pg = float(opp_row.iloc[0][def_col])
+        else:
+            opp_allowed_pg = league_allowed_pg
+
+    adj_factor = (opp_allowed_pg / league_allowed_pg) if (league_allowed_pg and league_allowed_pg > 0) else 1.0
+    predicted_pg = player_pg * adj_factor
+
+    stdev = max(3.0, predicted_pg * 0.35)
+    z = (line_val - predicted_pg) / stdev
+    prob_over = float(np.clip(1 - norm.cdf(z), 0.001, 0.999))
+    prob_under = float(np.clip(norm.cdf(z), 0.001, 0.999))
+
+    return {
+        "predicted_pg": predicted_pg,
+        "prob_over": prob_over,
+        "prob_under": prob_under,
+        "player_pg": player_pg,
+        "season_total": season_val,
+        "games_played": games_played
+    }
+
+# Odds helpers
+def american_to_decimal(odds: float) -> float:
+    try:
+        o = float(odds)
+    except Exception:
+        return np.nan
+    if o > 0:
+        return 1 + (o / 100.0)
+    else:
+        return 1 + (100.0 / abs(o))
+
+def decimal_to_american(dec: float) -> float:
+    if dec <= 1:
+        return np.nan
+    if dec >= 2:
+        return round((dec - 1) * 100)
+    else:
+        return round(-100 / (dec - 1))
+
+def prob_to_decimal(p: float) -> float:
+    p = float(np.clip(p, 1e-6, 1-1e-6))
+    return 1.0 / (1.0 - p + 1e-12)  # payout per $1 stake including stake
+
+def prob_to_american(p: float) -> float:
+    dec = prob_to_decimal(p)
+    return decimal_to_american(dec)
 
 # =========================
 # UI – Single Page
@@ -405,165 +574,176 @@ with st.container():
 
     c1, c2, c3 = st.columns([2, 1.2, 1.2])
     with c1:
-        player_name = st.selectbox("Select Player", [""] + both_players)
+        player_name = st.selectbox("Select Player", [""] + both_players, key="player_pick_props")
     with c2:
         prop_choices = ["passing_yards", "rushing_yards", "receiving_yards", "receptions", "targets", "carries", "anytime_td"]
-        selected_prop = st.selectbox("Prop Type", prop_choices, index=2)
+        selected_prop = st.selectbox("Prop Type", prop_choices, index=2, key="prop_type_props")
     with c3:
         default_line = 50.0 if selected_prop != "anytime_td" else 0.0
         line_val = st.number_input("Sportsbook Line", value=float(default_line)) if selected_prop != "anytime_td" else 0.0
 
     if player_name:
-        # Determine which sheet to use for the player
-        def pick_player_df(prop):
-            if prop in ["receiving_yards", "receptions", "targets"]:
-                return p_rec, "wr"
-            if prop in ["rushing_yards", "carries"]:
-                return p_rush, "rb"
-            if prop == "passing_yards":
-                return p_pass, "qb"
-            # Fallback for anytime TD: search both rec + rush
-            return p_rec, "wr"
+        res = prop_prediction_and_probs(
+            player_name=player_name,
+            selected_prop=selected_prop,
+            line_val=line_val,
+            selected_team_key=selected_team_key,
+            opponent_key=opponent_key,
+            p_rec=p_rec, p_rush=p_rush, p_pass=p_pass,
+            d_qb=d_qb, d_rb=d_rb, d_wr=d_wr, d_te=d_te
+        )
 
-        player_df_source, fallback_pos = pick_player_df(selected_prop)
-        this_player_df = find_player_in(player_df_source, player_name)
+        if "error" in res:
+            st.warning(res["error"])
+        elif selected_prop == "anytime_td":
+            st.subheader("Anytime TD Probability")
+            st.write(f"Estimated Anytime TD Probability: **{res['prob_anytime']*100:.1f}%**")
 
-        # --- ANYTIME TD: compute even if player is found in one table (we use rush+rec totals)
-        if selected_prop == "anytime_td":
-            rec_row = find_player_in(p_rec, player_name)
-            rush_row = find_player_in(p_rush, player_name)
-
-            total_tds = 0.0
-            total_games = 0.0
-            for df_ in [rec_row, rush_row]:
-                if df_ is not None and not df_.empty:
-                    td_cols = [c for c in df_.columns if "td" in c and "allowed" not in c]
-                    games_col = "games_played" if "games_played" in df_.columns else None
-                    if td_cols and games_col:
-                        tds = sum(float(df_.iloc[0][col]) for col in td_cols if pd.notna(df_.iloc[0][col]))
-                        total_tds += tds
-                        total_games = max(total_games, float(df_.iloc[0][games_col]))
-            if total_games == 0:
-                st.warning("No touchdown data found for this player.")
-            else:
-                # Defense context (RB/WR/TE) — all get a TDs/game metric
-                def_dfs = [d_rb.copy(), d_wr.copy(), d_te.copy()]
-                for d in def_dfs:
-                    if "games_played" not in d.columns:
-                        d["games_played"] = 1
-                    td_cols = [c for c in d.columns if "td" in c and "allowed" in c]
-                    d["tds_pg"] = d[td_cols].sum(axis=1) / d["games_played"].replace(0, np.nan)
-                    if "team_key" not in d.columns:
-                        d["team_key"] = d["team"].apply(team_key)
-
-                league_td_pg = np.nanmean([d["tds_pg"].mean() for d in def_dfs])
-
-                # Determine player's team key → opponent key
-                player_team_key = None
-                for df_ in [p_rec, p_rush, p_pass]:
-                    row_ = find_player_in(df_, player_name)
-                    if row_ is not None and not row_.empty:
-                        tk = row_.iloc[0].get("team_key", "")
-                        if tk:
-                            player_team_key = tk
-                            break
-                if not player_team_key:
-                    # Fallback: assume on selected side
-                    player_team_key = selected_team_key
-
-                opp_key_for_player = opponent_key if player_team_key == selected_team_key else selected_team_key
-
-                opp_td_list = []
-                for d in def_dfs:
-                    mask = d["team_key"] == opp_key_for_player
-                    opp_td_list.append(d.loc[mask, "tds_pg"].mean())
-                opp_td_pg = np.nanmean(opp_td_list)
-                if np.isnan(opp_td_pg):
-                    opp_td_pg = league_td_pg
-
-                adj_factor = (opp_td_pg / league_td_pg) if league_td_pg and league_td_pg > 0 else 1.0
-                adj_td_rate = (total_tds / total_games) * adj_factor
-                # Convert rate to probability (Poisson ~ at least one TD)
-                prob_anytime = 1 - np.exp(-adj_td_rate)
-                prob_anytime = float(np.clip(prob_anytime, 0.0, 1.0))
-
-                opp_label = CODE_TO_FULLNAME.get(opp_key_for_player, opp_key_for_player)
-                st.subheader("Anytime TD Probability")
-                st.write(f"Estimated Anytime TD Probability: **{prob_anytime*100:.1f}%**")
-
-                bar_df = pd.DataFrame(
-                    {"Category": ["Player TDs/Game", "Adj. vs Opponent"], "TDs/Game": [(total_tds/total_games), adj_td_rate]}
-                )
-                st.plotly_chart(
-                    px.bar(bar_df, x="Category", y="TDs/Game", title=f"{player_name} – Anytime TD vs {opp_label}"),
-                    use_container_width=True
-                )
-
-        # --- Non-TD props
-        elif this_player_df is None or this_player_df.empty:
-            st.warning("Player not found in the selected stat table.")
+            bar_df = pd.DataFrame(
+                {"Category": ["Player TDs/Game", "Adj. vs Opponent"], "TDs/Game": [res["player_rate"], res["adj_rate"]]}
+            )
+            st.plotly_chart(
+                px.bar(bar_df, x="Category", y="TDs/Game", title=f"{player_name} – Anytime TD"),
+                use_container_width=True
+            )
         else:
-            player_pos = this_player_df.iloc[0].get("position", fallback_pos)
-            stat_col = detect_stat_col(this_player_df, selected_prop)
-            if not stat_col:
-                st.warning("No matching stat column found for this prop.")
-            else:
-                # Season per-game from player table
-                season_val = float(this_player_df.iloc[0][stat_col]) if pd.notna(this_player_df.iloc[0][stat_col]) else 0.0
-                games_played = float(this_player_df.iloc[0].get("games_played", 1)) or 1.0
-                player_pg = season_val / games_played if games_played > 0 else 0.0
+            st.subheader(selected_prop.replace("_", " ").title())
+            st.write(f"**Adjusted prediction (this game):** {res['predicted_pg']:.2f}")
+            st.write(f"**Line:** {line_val:.1f}")
+            st.write(f"**Probability of OVER:** {res['prob_over']*100:.1f}%")
+            st.write(f"**Probability of UNDER:** {res['prob_under']*100:.1f}%")
 
-                # Defense adjust
-                def_df = pick_def_df(selected_prop, player_pos, d_qb, d_rb, d_wr, d_te)
-                def_col = detect_def_col(def_df, selected_prop) if def_df is not None else None
-
-                # Figure opponent for THIS player via team keys
-                player_team_key = str(this_player_df.iloc[0].get("team_key", "")).strip()
-                opp_key_for_player = opponent_key if player_team_key == selected_team_key else selected_team_key
-
-                opp_allowed_pg = None
-                league_allowed_pg = None
-
-                if def_df is not None and def_col is not None:
-                    if "team_key" not in def_df.columns:
-                        def_df["team_key"] = def_df["team"].apply(team_key)
-
-                    if "games_played" in def_df.columns:
-                        league_allowed_pg = (def_df[def_col] / def_df["games_played"].replace(0, np.nan)).mean()
-                    else:
-                        league_allowed_pg = def_df[def_col].mean()
-
-                    opp_row = def_df[def_df["team_key"] == opp_key_for_player]
-                    if not opp_row.empty:
-                        if "games_played" in opp_row.columns and float(opp_row.iloc[0]["games_played"]) > 0:
-                            opp_allowed_pg = float(opp_row.iloc[0][def_col]) / float(opp_row.iloc[0]["games_played"])
-                        else:
-                            opp_allowed_pg = float(opp_row.iloc[0][def_col])
-                    else:
-                        opp_allowed_pg = league_allowed_pg
-
-                adj_factor = (opp_allowed_pg / league_allowed_pg) if (league_allowed_pg and league_allowed_pg > 0) else 1.0
-                predicted_pg = player_pg * adj_factor
-
-                stdev = max(3.0, predicted_pg * 0.35)
-                z = (line_val - predicted_pg) / stdev
-                prob_over = float(np.clip(1 - norm.cdf(z), 0.001, 0.999))
-                prob_under = float(np.clip(norm.cdf(z), 0.001, 0.999))
-
-                st.subheader(selected_prop.replace("_", " ").title())
-                st.write(f"**Player (season total):** {season_val:.2f} over {games_played:.0f} games → **{player_pg:.2f} per game**")
-                st.write(f"**Adjusted prediction (this game):** {predicted_pg:.2f}")
-                st.write(f"**Line:** {line_val:.1f}")
-                st.write(f"**Probability of OVER:** {prob_over*100:.1f}%")
-                st.write(f"**Probability of UNDER:** {prob_under*100:.1f}%")
-
-                st.plotly_chart(
-                    px.bar(
-                        x=["Predicted (this game)", "Line"],
-                        y=[predicted_pg, line_val],
-                        title=f"{player_name} – {selected_prop.replace('_', ' ').title()}"
-                    ),
-                    use_container_width=True
-                )
+            st.plotly_chart(
+                px.bar(
+                    x=["Predicted (this game)", "Line"],
+                    y=[res['predicted_pg'], line_val],
+                    title=f"{player_name} – {selected_prop.replace('_', ' ').title()}"
+                ),
+                use_container_width=True
+            )
     else:
         st.info("Select a player to evaluate props.")
+
+# -------------------------
+# 5) Parlay Builder (Any Player + Choose Opponent by Full Name)
+# -------------------------
+with st.container():
+    st.header("5) Parlay Builder (Model‑Driven, Any Game)")
+
+    if "parlay_legs" not in st.session_state:
+        st.session_state.parlay_legs = []  # each leg: dict(player, prop, line, side, prob, note)
+
+    # Build global player pool (any team)
+    def unique_players(*dfs):
+        names = []
+        for df in dfs:
+            if "player" in df.columns:
+                names.extend(list(df["player"].dropna().astype(str).unique()))
+        return sorted(pd.unique(names))
+
+    all_players = unique_players(p_rec, p_rush, p_pass)
+    full_team_names = sorted(list(CODE_TO_FULLNAME.values()))
+
+    a1, a2, a3, a4, a5 = st.columns([2.2, 1.6, 1.2, 1.2, 1.2])
+    with a1:
+        pb_player = st.selectbox("Player", [""] + all_players, key="pb_any_player")
+    with a2:
+        pb_prop = st.selectbox("Prop", ["passing_yards", "rushing_yards", "receiving_yards", "receptions", "targets", "carries", "anytime_td"], key="pb_any_prop")
+    with a3:
+        if pb_prop == "anytime_td":
+            pb_line = 0.0
+            pb_side = "yes"
+            st.text_input("Line", "—", disabled=True, key="pb_any_line_disabled")
+        else:
+            pb_line = st.number_input("Line", value=50.0, step=0.5, key="pb_any_line")
+            pb_side = st.selectbox("Side", ["over", "under"], key="pb_any_side")
+    with a4:
+        pb_opp_full = st.selectbox("Opponent (Full Name)", full_team_names, key="pb_any_opp_full")
+        pb_opp_key = FULLNAME_TO_CODE.get(pb_opp_full, "")
+    with a5:
+        if st.button("➕ Add Leg", use_container_width=True, key="pb_any_add"):
+            if not pb_player:
+                st.warning("Pick a player first.")
+            elif not pb_opp_key:
+                st.warning("Pick an opponent team.")
+            else:
+                # compute model probability for this leg using explicit opponent override
+                res = prop_prediction_and_probs(
+                    player_name=pb_player,
+                    selected_prop=pb_prop,
+                    line_val=pb_line,
+                    selected_team_key="SEL",   # placeholder; not used when override provided
+                    opponent_key="OPP",        # placeholder; not used when override provided
+                    p_rec=p_rec, p_rush=p_rush, p_pass=p_pass,
+                    d_qb=d_qb, d_rb=d_rb, d_wr=d_wr, d_te=d_te,
+                    opponent_key_override=pb_opp_key
+                )
+                if "error" in res:
+                    st.warning(res["error"])
+                else:
+                    if pb_prop == "anytime_td":
+                        prob = res["prob_anytime"]
+                        note = f"TD vs {pb_opp_full}: {prob*100:.1f}%"
+                    else:
+                        prob = res["prob_over"] if pb_side == "over" else res["prob_under"]
+                        note = f"{pb_side.title()} {pb_line} vs {pb_opp_full} → {prob*100:.1f}%"
+                    st.session_state.parlay_legs.append({
+                        "player": pb_player,
+                        "prop": pb_prop,
+                        "side": pb_side if pb_prop != "anytime_td" else "yes",
+                        "line": float(pb_line),
+                        "prob": float(prob),
+                        "note": note
+                    })
+                    st.rerun()
+
+    # Render legs with remove buttons
+    if st.session_state.parlay_legs:
+        st.subheader("Your Legs")
+        for i, leg in enumerate(st.session_state.parlay_legs):
+            c1, c2, c3, c4, c5 = st.columns([2, 1.6, 2.4, 1.4, 0.9])
+            c1.markdown(f"**{leg['player']}**")
+            c2.write(f"{leg['prop'].replace('_',' ').title()}")
+            if leg["prop"] == "anytime_td":
+                c3.write("Anytime TD")
+            else:
+                c3.write(f"{leg['side'].title()} {leg['line']}")
+            c4.write(f"Model Pr: **{leg['prob']*100:.1f}%**")
+            if c5.button("🗑 Remove", key=f"rm_any_{i}"):
+                st.session_state.parlay_legs.pop(i)
+                st.rerun()
+
+        # Parlay calculations
+        probs = [leg["prob"] for leg in st.session_state.parlay_legs]
+        parlay_hit_prob = float(np.prod(probs)) if probs else 0.0
+        model_dec_odds = prob_to_decimal(parlay_hit_prob)
+        model_am_odds = prob_to_american(parlay_hit_prob)
+
+        st.markdown("---")
+        b1, b2, b3 = st.columns([1.2, 1, 1])
+        with b1:
+            book_total_american = st.text_input("Book Total Parlay Odds (American, e.g. +650)", value="", key="book_any_odds")
+        with b2:
+            stake = st.number_input("Stake ($)", value=100.0, step=10.0, min_value=0.0, key="book_any_stake")
+        with b3:
+            st.metric("Model Parlay Prob.", f"{parlay_hit_prob*100:.1f}%")
+
+        # EV vs book
+        if book_total_american.strip():
+            try:
+                text = book_total_american.strip()
+                if text.startswith("+") or text.startswith("-"):
+                    book_am = float(text)
+                else:
+                    book_am = float(text)
+                book_dec = american_to_decimal(book_am)
+                payout = stake * (book_dec - 1.0)
+                ev = parlay_hit_prob * payout - (1 - parlay_hit_prob) * stake
+                st.metric("Model Fair Odds", f"{int(model_am_odds):+d}")
+                st.metric("Expected Value ($)", f"{ev:,.2f}")
+            except Exception:
+                st.warning("Could not parse the book odds you entered. Use a number like +650 or -120.")
+        else:
+            st.metric("Model Fair Odds", f"{int(model_am_odds):+d}")
+    else:
+        st.info("Add legs above to build your parlay. Choose any player, pick the prop/line/side, and select the opponent by full team name. We'll multiply model probabilities for your parlay hit rate.")
