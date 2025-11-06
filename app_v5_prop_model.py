@@ -6,7 +6,7 @@ from scipy.stats import norm
 import plotly.express as px
 import re
 
-st.set_page_config(page_title="New Model Dashboard", layout="wide")
+st.set_page_config(page_title="NFL Betting Model", layout="wide")
 
 # =========================
 # Data Sources (Google Sheets)
