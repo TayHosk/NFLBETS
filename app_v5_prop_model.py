@@ -6,7 +6,7 @@ from scipy.stats import norm
 import plotly.express as px
 import re
 
-st.set_page_config(page_title="NFL Game + Player Props Dashboard", layout="wide")
+st.set_page_config(page_title="New Model Dashboard", layout="wide")
 
 # =========================
 # Data Sources (Google Sheets)
@@ -114,11 +114,10 @@ CODE_TO_FULLNAME = {
 FULLNAME_TO_CODE = {v: k for k, v in CODE_TO_FULLNAME.items()}
 
 def team_key(name: str) -> str:
-    """Map any team string (full, nickname, abbreviation) to a canonical 2–3 letter code."""
     if pd.isna(name):
         return ""
     s = str(name).strip().lower()
-    return TEAM_ALIAS_TO_CODE.get(s, s)  # fall back to cleaned string if unknown
+    return TEAM_ALIAS_TO_CODE.get(s, s)
 
 # =========================
 # Sidebar: Cache refresh
@@ -138,27 +137,61 @@ def normalize_header(name: str) -> str:
     name = re.sub(r"[^0-9a-z_]", "", name)
     return name
 
+def compute_home_spread(row: pd.Series) -> float:
+    """
+    Convert (favored_team, spread) into HOME-based spread.
+      - If home is the favorite  → return negative abs(spread)  (e.g., -9.5)
+      - If away is the favorite  → return positive abs(spread)  (home is underdog, e.g., +9.5)
+    Uses team_key() on both fields so 'DEN' matches 'Broncos' etc.
+    """
+    try:
+        home = row.get("home_team", None)
+        fav = row.get("favored_team", None)
+        sp = row.get("spread", np.nan)  # already numeric after cleaning
+        if pd.isna(sp) or not fav or not home:
+            return np.nan
+        hk = team_key(home)
+        fk = team_key(fav)
+        return -abs(sp) if (fk and hk and fk == hk) else abs(sp)
+    except Exception:
+        return np.nan
+
 @st.cache_data(show_spinner=False)
 def load_scores() -> pd.DataFrame:
     df = pd.read_csv(SCORE_URL)
+    # Normalize headers
     df.columns = [normalize_header(c) for c in df.columns]
-    # Add canonical keys for join logic
+
+    # Coerce numeric fields
+    if "over_under" in df.columns:
+        df["over_under"] = pd.to_numeric(df["over_under"], errors="coerce")
+    if "spread" in df.columns:
+        df["spread"] = pd.to_numeric(df["spread"], errors="coerce")
+
+    # Make quick keys for teams (useful elsewhere)
     if "home_team" in df.columns:
         df["home_key"] = df["home_team"].apply(team_key)
     if "away_team" in df.columns:
         df["away_key"] = df["away_team"].apply(team_key)
+    if "favored_team" in df.columns:
+        df["favored_key"] = df["favored_team"].apply(team_key)
+
+    # Derive home_spread from favored_team + spread using keys
+    if {"home_team", "favored_team", "spread"}.issubset(df.columns):
+        df["home_spread"] = df.apply(compute_home_spread, axis=1)
+    else:
+        df["home_spread"] = np.nan
+
     return df
 
 def load_and_clean(url: str) -> pd.DataFrame:
     df = pd.read_csv(url)
     df.columns = [normalize_header(c) for c in df.columns]
-    # Ensure a 'team' column and compute team_key
     if "team" in df.columns:
         df["team"] = df["team"].astype(str).str.strip()
     elif "teams" in df.columns:
         df["team"] = df["teams"].astype(str).str.strip()
     else:
-        # create empty to avoid key errors later
         df["team"] = ""
     df["team_key"] = df["team"].apply(team_key)
     return df
@@ -168,7 +201,6 @@ def load_all_player_dfs():
     return {name: load_and_clean(url) for name, url in SHEETS.items()}
 
 def avg_scoring(df: pd.DataFrame, team_label: str):
-    """Keeps your original logic using the labels present in the SCORE sheet."""
     scored_home = df.loc[df["home_team"] == team_label, "home_score"].mean()
     scored_away = df.loc[df["away_team"] == team_label, "away_score"].mean()
     allowed_home = df.loc[df["home_team"] == team_label, "away_score"].mean()
@@ -178,13 +210,10 @@ def avg_scoring(df: pd.DataFrame, team_label: str):
 def predict_scores(df: pd.DataFrame, team_label: str, opponent_label: str):
     team_avg_scored, team_avg_allowed = avg_scoring(df, team_label)
     opp_avg_scored, opp_avg_allowed = avg_scoring(df, opponent_label)
-
     raw_team_pts = (team_avg_scored + opp_avg_allowed) / 2
     raw_opp_pts = (opp_avg_scored + team_avg_allowed) / 2
-
     league_avg_pts = df[["home_score", "away_score"]].stack().mean()
     cal_factor = 22.3 / league_avg_pts if not np.isnan(league_avg_pts) and league_avg_pts > 0 else 1.0
-
     team_pts = float(raw_team_pts * cal_factor) if pd.notna(raw_team_pts) else 22.3
     opp_pts = float(raw_opp_pts * cal_factor) if pd.notna(raw_opp_pts) else 22.3
     return team_pts, opp_pts
@@ -211,7 +240,6 @@ def detect_stat_col(df: pd.DataFrame, prop: str):
     for cand in pri:
         if cand in norm:
             return cols[norm.index(cand)]
-    # fallback: try columns containing the prop name
     for i, c in enumerate(norm):
         if prop.split("_")[0] in c and ("per_game" in c or "total" in c):
             return cols[i]
@@ -263,8 +291,6 @@ def prop_prediction_and_probs(
     d_te: pd.DataFrame,
     opponent_key_override: str = None
 ):
-    """Return dict with predicted_pg, prob_over, prob_under (non-TD) or prob_anytime (TD).
-       If opponent_key_override is given, use that defense regardless of selected game."""
     def pick_player_df(prop):
         if prop in ["receiving_yards", "receptions", "targets"]:
             return p_rec, "wr"
@@ -274,7 +300,6 @@ def prop_prediction_and_probs(
             return p_pass, "qb"
         return p_rec, "wr"
 
-    # Anytime TD calculation
     if selected_prop == "anytime_td":
         rec_row = find_player_in(p_rec, player_name)
         rush_row = find_player_in(p_rush, player_name)
@@ -302,7 +327,6 @@ def prop_prediction_and_probs(
             if "team_key" not in d.columns:
                 d["team_key"] = d["team"].apply(team_key)
         league_td_pg = np.nanmean([d["tds_pg"].mean() for d in def_dfs if "tds_pg" in d.columns])
-        # determine player's team key
         player_team_key = None
         for df_ in [p_rec, p_rush, p_pass]:
             row_ = find_player_in(df_, player_name)
@@ -313,7 +337,6 @@ def prop_prediction_and_probs(
                     break
         if not player_team_key:
             player_team_key = selected_team_key
-        # determine opponent
         if opponent_key_override:
             opp_key_for_player = opponent_key_override
         else:
@@ -333,7 +356,6 @@ def prop_prediction_and_probs(
         prob_anytime = float(np.clip(prob_anytime, 0.0, 1.0))
         return {"prob_anytime": prob_anytime, "adj_rate": adj_td_rate, "player_rate": (total_tds/total_games)}
 
-    # Non-TD props
     player_df_source, fallback_pos = pick_player_df(selected_prop)
     this_player_df = find_player_in(player_df_source, player_name)
     if this_player_df is None or this_player_df.empty:
@@ -362,12 +384,10 @@ def prop_prediction_and_probs(
     if def_df is not None and def_col is not None:
         if "team_key" not in def_df.columns:
             def_df["team_key"] = def_df["team"].apply(team_key)
-
         if "games_played" in def_df.columns:
             league_allowed_pg = (def_df[def_col] / def_df["games_played"].replace(0, np.nan)).mean()
         else:
             league_allowed_pg = def_df[def_col].mean()
-
         opp_row = def_df[def_df["team_key"] == opp_key_for_player]
         if not opp_row.empty:
             if "games_played" in opp_row.columns and float(opp_row.iloc[0]["games_played"]) > 0:
@@ -394,7 +414,7 @@ def prop_prediction_and_probs(
         "games_played": games_played
     }
 
-# Odds helpers
+# Odds + market helpers
 def american_to_decimal(odds: float) -> float:
     try:
         o = float(odds)
@@ -415,43 +435,96 @@ def decimal_to_american(dec: float) -> float:
 
 def prob_to_decimal(p: float) -> float:
     p = float(np.clip(p, 1e-6, 1-1e-6))
-    return 1.0 / (1.0 - p + 1e-12)  # payout per $1 stake including stake
+    return 1.0 / (1.0 - p + 1e-12)
 
 def prob_to_american(p: float) -> float:
     dec = prob_to_decimal(p)
     return decimal_to_american(dec)
 
-# ========== Game market prob helpers ==========
 def prob_total_over_under(scores_df: pd.DataFrame, home: str, away: str, line_total: float):
-    # predict game total then compute prob that total > line
-    team_pts, opp_pts = predict_scores(scores_df, home, away)  # home vs away labeling doesn't matter for total
-    pred_total = team_pts + opp_pts
-    stdev_total = max(6.0, pred_total * 0.18)  # heuristic
+    home_pts, away_pts = predict_scores(scores_df, home, away)
+    pred_total = home_pts + away_pts
+    stdev_total = max(6.0, pred_total * 0.18)
     z = (line_total - pred_total) / stdev_total
     p_over = float(np.clip(1 - norm.cdf(z), 0.001, 0.999))
     p_under = float(np.clip(norm.cdf(z), 0.001, 0.999))
     return pred_total, p_over, p_under
 
-def prob_spread_cover(scores_df: pd.DataFrame, home: str, away: str, spread_home_negative: float, side: str):
-    # spread_home_negative: negative means home favored by abs(spread)
+def prob_spread_cover(scores_df: pd.DataFrame, home: str, away: str, home_spread: float, side: str):
+    """
+    home_spread is from HOME perspective:
+      - Negative → home favorite by abs(home_spread)
+      - Positive → home underdog getting abs(home_spread)
+    side: 'home' or 'away'
+    """
     home_pts, away_pts = predict_scores(scores_df, home, away)
     pred_margin = home_pts - away_pts  # home - away
-    stdev_margin = max(5.0, abs(pred_margin) * 0.9 + 6.0)  # heuristic
-    # Line is home margin (negative = home favored). To cover home, need pred_margin > -spread
-    line_margin = -spread_home_negative  # book expresses negative favorite; convert to margin target
+    stdev_margin = max(5.0, abs(pred_margin) * 0.9 + 6.0)
+    line_margin = -home_spread  # threshold margin to beat
     z = (line_margin - pred_margin) / stdev_margin
     p_home_cover = float(np.clip(1 - norm.cdf(z), 0.001, 0.999))
     p_away_cover = 1.0 - p_home_cover
-    if side == "home":
-        return pred_margin, p_home_cover
-    else:
-        return pred_margin, p_away_cover
+    return (pred_margin, p_home_cover) if side == "home" else (pred_margin, p_away_cover)
 
 # =========================
 # UI – Single Page
 # =========================
-st.title("🏈 NFL Game + Player Prop Dashboard")
+st.title("🏈 The Officially un-official NFL Betting Model")
+with st.expander("📘 How This Model Works", expanded=False):
+    st.markdown("""
+**Welcome to the New Model Dashboard — Where Data Picks the Winners.**
 
+This model is built to **cut through the noise** and spot betting edges that the market hasn't fully priced in yet. Instead of vibes, group chats, or ESPN narratives — we use **scoring efficiency, opponent strength, and league normalization** to project how each team *SHOULD* perform.
+
+### 🔥 Core Model Logic
+- We measure **how many points each team scores** and **how many they allow**, both home and away.
+- We blend team performance with opponent defensive tendencies to project:
+  **Home Score**, **Away Score**, **Total Points**, and **Expected Margin**.
+- Then we compare these projections to **Vegas lines** to find edges:
+  - **Total Edge** → Difference between projected total & the Over/Under.
+  - **Spread Edge** → Difference between projected margin & the spread.
+
+The **bigger the edge**, the more the model likes the bet.
+
+---
+
+### 🏈 Section Breakdown
+
+#### **1) Game Selection + Prediction**
+Pick the week, a game, and the model shows:
+- Predicted points for each team
+- Predicted margin
+- Where your edge is vs. Vegas  
+This is your quick, clean, matchup-level read.
+
+#### **2) Top Edges This Week** (This is still under maintance but still makes sense. Will fix soon)
+This is the **money board**.  
+- Every game sorted by **strongest advantage**.
+- **🟩 Green** = Strong play  
+- **🟨 Yellow** = Lean  
+- **🟥 Red** = Probably pass  
+
+Spread picks are always shown in the **correct betting format** (e.g., *Broncos -3.5* or *Raiders +7*).
+
+#### **3) Player Props**
+This corelates with section. Once you entered in a game for section 1, you can enter a player and stat line — the model calculates:
+- Expected performance vs opponent defense
+- Probability of **Over** and **Under**
+This helps find hidden prop value.
+
+#### **4) Parlay Builder**
+Stack legs from:
+- Game markets (spread & totals)
+- Player props
+
+The model calculates the **true probability** and your **expected value** vs sportsbook odds.
+
+---
+
+### 🎯 Goal
+This dashboard is designed to give **clarity + confidence**.
+No noise. No confusion. Just **where the edge is** — and how strong it is. (This is not financial advice. Bet responsibly and stick to your units)
+""")
 scores_df = load_scores()
 if scores_df.empty:
     st.error("Could not load NFL game data.")
@@ -461,7 +534,6 @@ player_data = load_all_player_dfs()
 p_rec, p_rush, p_pass = player_data["player_receiving"], player_data["player_rushing"], player_data["player_passing"]
 d_rb, d_qb, d_wr, d_te = player_data["def_rb"], player_data["def_qb"], player_data["def_wr"], player_data["def_te"]
 
-# Top "Jump to section" control → controls which expander opens (smooth expand UX)
 section_names = [
     "1) Game Selection + Prediction",
     "2) Top Edges This Week",
@@ -471,7 +543,7 @@ section_names = [
 selected_section = st.selectbox("Jump to section", section_names, index=0, help="Pick a section to open")
 
 # -------------------------
-# Section 1: Game Selection + Prediction (combined)
+# Section 1: Game Selection + Prediction
 # -------------------------
 with st.expander("1) Game Selection + Prediction", expanded=(selected_section == section_names[0])):
     st.subheader("Select Game")
@@ -486,7 +558,6 @@ with st.expander("1) Game Selection + Prediction", expanded=(selected_section ==
         )
         selected_team = st.selectbox("Team", teams_in_week, key="sec1_team")
 
-    # Find game row & opponent using labels from SCORE sheet
     game_row = scores_df[
         ((scores_df["home_team"] == selected_team) | (scores_df["away_team"] == selected_team))
         & (scores_df["week"] == selected_week)
@@ -497,22 +568,18 @@ with st.expander("1) Game Selection + Prediction", expanded=(selected_section ==
         g = game_row.iloc[0]
         opponent = g["away_team"] if g["home_team"] == selected_team else g["home_team"]
 
-        # Canonical keys for cross-sheet joins
-        selected_team_key = team_key(selected_team)
-        opponent_key = team_key(opponent)
-
         with cols[2]:
             st.markdown(f"**Matchup:** {selected_team} vs {opponent}")
 
-        # Lines (pre-fill from sheet if present)
-        default_ou = float(g.get("over_under", 45.0)) if pd.notna(g.get("over_under", np.nan)) else 45.0
-        default_spread = float(g.get("spread", 0.0)) if pd.notna(g.get("spread", np.nan)) else 0.0
+        # Prefill: O/U and HOME-BASED spread (home_spread) – these now auto-populate from the sheet
+        default_ou = float(g["over_under"]) if pd.notna(g.get("over_under", np.nan)) else 45.0
+        default_home_spread = float(g["home_spread"]) if pd.notna(g.get("home_spread", np.nan)) else 0.0
 
         cL, cR = st.columns(2)
         with cL:
             over_under = st.number_input("Over/Under (Vegas or yours)", value=default_ou, step=0.5, key="sec1_ou")
         with cR:
-            spread = st.number_input("Spread (negative = favorite)", value=default_spread, step=0.5, key="sec1_spread")
+            home_spread_val = st.number_input("Home-based Spread (home team perspective)", value=default_home_spread, step=0.5, key="sec1_spread")
 
         # --- Game prediction ---
         st.subheader("Game Prediction (Vegas-Calibrated)")
@@ -520,79 +587,113 @@ with st.expander("1) Game Selection + Prediction", expanded=(selected_section ==
         total_pred = team_pts + opp_pts
         margin = team_pts - opp_pts
         total_diff = total_pred - over_under
-        spread_diff = margin - (-spread)
+        spread_diff = margin - (-home_spread_val)  # compare to home margin target
 
-        # Two rows of metrics for mobile
         mrow1 = st.columns(2)
         mrow1[0].metric(f"{selected_team} Predicted", f"{team_pts:.1f} pts")
         mrow1[1].metric(f"{opponent} Predicted", f"{opp_pts:.1f} pts")
         mrow2 = st.columns(2)
         mrow2[0].metric("Predicted Total", f"{total_pred:.1f}", f"{total_diff:+.1f} vs O/U")
-        mrow2[1].metric("Predicted Margin", f"{margin:+.1f}", f"{spread_diff:+.1f} vs Spread")
+        mrow2[1].metric("Predicted Margin", f"{margin:+.1f}", f"{spread_diff:+.1f} vs Home Spread")
 
-        # Charts inside this section
-        fig_total = px.bar(
-            x=["Predicted Total", "Vegas O/U"],
-            y=[total_pred, over_under],
-            title="Predicted Total vs O/U"
-        )
+        fig_total = px.bar(x=["Predicted Total", "Vegas O/U"], y=[total_pred, over_under], title="Predicted Total vs O/U")
         st.plotly_chart(fig_total, use_container_width=True)
 
-        fig_margin = px.bar(
-            x=["Predicted Margin", "Vegas Spread"],
-            y=[margin, -spread],
-            title="Predicted Margin vs Spread"
-        )
+        fig_margin = px.bar(x=["Predicted Margin", "Home Spread Target"], y=[margin, -home_spread_val], title="Predicted Margin vs Home Spread")
         st.plotly_chart(fig_margin, use_container_width=True)
 
 # -------------------------
-# Section 2: Top Edges of the Week
+# Section 2: Top Edges This Week (home-based formatting + clear pick text)
 # -------------------------
 with st.expander("2) Top Edges This Week", expanded=(selected_section == section_names[1])):
-    if 'sec1_week' in st.session_state:
-        selected_week_for_edges = st.session_state['sec1_week']
-    else:
-        selected_week_for_edges = sorted(scores_df["week"].dropna().unique())[0]
+    selected_week_for_edges = st.session_state.get('sec1_week', sorted(scores_df["week"].dropna().unique())[0])
+    st.caption(f"Week shown: {selected_week_for_edges} — Legend: 🟩 strong | 🟨 lean | 🟥 pass")
+
     wk = scores_df[scores_df["week"] == selected_week_for_edges].copy()
-    st.caption(f"Week shown: {selected_week_for_edges}")
+    if "home_spread" not in wk.columns:
+        wk["home_spread"] = wk.apply(compute_home_spread, axis=1)
+
+    def strength_badge(edge_val):
+        if pd.isna(edge_val):
+            return "⬜"
+        a = abs(edge_val)
+        if a >= 4:
+            return "🟩"
+        elif a >= 2:
+            return "🟨"
+        else:
+            return "🟥"
+
     rows = []
     for _, r in wk.iterrows():
         h, a = r.get("home_team"), r.get("away_team")
         if pd.isna(h) or pd.isna(a):
             continue
+
         h_pts, a_pts = predict_scores(scores_df, h, a)
-        tot = h_pts + a_pts
-        mar = h_pts - a_pts
+        tot_pred = h_pts + a_pts
+        mar_pred = h_pts - a_pts  # home - away
+
         ou = float(r.get("over_under")) if pd.notna(r.get("over_under", np.nan)) else np.nan
-        sp = float(r.get("spread")) if pd.notna(r.get("spread", np.nan)) else np.nan
-        total_edge = np.nan if pd.isna(ou) else tot - ou
-        spread_edge = np.nan if pd.isna(sp) else mar - (-sp)
+        home_spread = float(r.get("home_spread")) if pd.notna(r.get("home_spread", np.nan)) else np.nan
+
+        total_edge = np.nan if pd.isna(ou) else (tot_pred - ou)
+        spread_edge = np.nan if pd.isna(home_spread) else (mar_pred - (-home_spread))
+
+        # Total pick label
+        if pd.isna(total_edge):
+            total_pick = ""
+        else:
+            direction = "OVER" if total_edge > 0 else "UNDER"
+            total_badge = strength_badge(total_edge)
+            total_pick = f"{total_badge} {direction}"
+
+        # Spread pick label
+        if pd.isna(spread_edge) or pd.isna(home_spread):
+            spread_pick = ""
+        else:
+            home_covers = mar_pred > -home_spread
+            if home_covers:
+                pick_text = f"{h} {home_spread:+.1f}"
+            else:
+                pick_text = f"{a} {(-home_spread):+.1f}"
+            spread_badge = strength_badge(spread_edge)
+            spread_pick = f"{spread_badge} {pick_text}"
+
         rows.append({
             "Matchup": f"{a} @ {h}",
-            "Pred Total": round(tot, 1),
+            "Pred Total": round(tot_pred, 1),
             "O/U": ou if not pd.isna(ou) else "",
             "Total Edge (pts)": None if pd.isna(total_edge) else round(total_edge, 1),
-            "Pred Margin": round(mar, 1),
-            "Spread": sp if not pd.isna(sp) else "",
+            "Total Pick": total_pick,
+            "Pred Margin": round(mar_pred, 1),
+            "Home Spread": home_spread if not pd.isna(home_spread) else "",
             "Spread Edge (pts)": None if pd.isna(spread_edge) else round(spread_edge, 1),
+            "Spread Pick": spread_pick,
         })
+
     edges_df = pd.DataFrame(rows)
+
     if not edges_df.empty:
-        # Rank by absolute edge (take the larger of total/spread edge per row)
-        def edge_rank(row):
+        def best_edge(row):
             vals = [abs(v) for v in [row.get("Total Edge (pts)"), row.get("Spread Edge (pts)")] if pd.notna(v)]
             return max(vals) if vals else 0.0
-        edges_df["Abs Edge"] = edges_df.apply(edge_rank, axis=1)
-        edges_df = edges_df.sort_values("Abs Edge", ascending=False).drop(columns=["Abs Edge"])
-        st.dataframe(edges_df, use_container_width=True)
+        edges_df["Rank Score"] = edges_df.apply(best_edge, axis=1)
+        edges_df = edges_df.sort_values("Rank Score", ascending=False).drop(columns=["Rank Score"])
+
+        display_cols = [
+            "Matchup",
+            "Pred Total", "O/U", "Total Edge (pts)", "Total Pick",
+            "Pred Margin", "Home Spread", "Spread Edge (pts)", "Spread Pick"
+        ]
+        st.dataframe(edges_df[display_cols], use_container_width=True)
     else:
         st.info("No games found for this week.")
 
 # -------------------------
-# Section 3: Player Props (players from both teams)
+# Section 3: Player Props (players from both teams of selected game)
 # -------------------------
 with st.expander("3) Player Props", expanded=(selected_section == section_names[2])):
-    # Require that Section 1 set the matchup to determine opponent_key
     if 'sec1_team' not in st.session_state or 'sec1_week' not in st.session_state:
         st.info("Pick a game in Section 1 first.")
     else:
@@ -607,16 +708,18 @@ with st.expander("3) Player Props", expanded=(selected_section == section_names[
         else:
             g = game_row.iloc[0]
             opponent = g["away_team"] if g["home_team"] == selected_team else g["home_team"]
-            selected_team_key = team_key(selected_team)
-            opponent_key = team_key(opponent)
 
-            # Build player list from both teams using canonical keys
             def players_for_team(df, team_name_or_label):
                 key = team_key(team_name_or_label)
                 if "team_key" not in df.columns or "player" not in df.columns:
                     return []
                 mask = df["team_key"] == key
                 return list(df.loc[mask, "player"].dropna().unique())
+
+            # Player pools
+            player_data = load_all_player_dfs()
+            p_rec, p_rush, p_pass = player_data["player_receiving"], player_data["player_rushing"], player_data["player_passing"]
+            d_rb, d_qb, d_wr, d_te = player_data["def_rb"], player_data["def_qb"], player_data["def_wr"], player_data["def_te"]
 
             team_players = set(
                 players_for_team(p_rec, selected_team) +
@@ -630,11 +733,10 @@ with st.expander("3) Player Props", expanded=(selected_section == section_names[
             )
             both_players = sorted(team_players.union(opp_players))
 
-            # Helpful message if no players found (usually a team alias mismatch)
             if not both_players:
                 st.info(
-                    "No players found for this matchup. This often means team labels differ across sheets. "
-                    f"Resolved keys — Your selection: **{selected_team_key}**, Opponent: **{opponent_key}**."
+                    "No players found for this matchup. "
+                    f"Resolved keys — Your selection: **{team_key(selected_team)}**, Opponent: **{team_key(opponent)}**."
                 )
 
             c1, c2, c3 = st.columns([2, 1.2, 1.2])
@@ -652,8 +754,8 @@ with st.expander("3) Player Props", expanded=(selected_section == section_names[
                     player_name=player_name,
                     selected_prop=selected_prop,
                     line_val=line_val,
-                    selected_team_key=selected_team_key,
-                    opponent_key=opponent_key,
+                    selected_team_key=team_key(selected_team),
+                    opponent_key=team_key(opponent),
                     p_rec=p_rec, p_rush=p_rush, p_pass=p_pass,
                     d_qb=d_qb, d_rb=d_rb, d_wr=d_wr, d_te=d_te
                 )
@@ -663,51 +765,42 @@ with st.expander("3) Player Props", expanded=(selected_section == section_names[
                 elif selected_prop == "anytime_td":
                     st.subheader("Anytime TD Probability")
                     st.write(f"Estimated Anytime TD Probability: **{res['prob_anytime']*100:.1f}%**")
-
-                    bar_df = pd.DataFrame(
-                        {"Category": ["Player TDs/Game", "Adj. vs Opponent"], "TDs/Game": [res["player_rate"], res["adj_rate"]]}
-                    )
-                    st.plotly_chart(
-                        px.bar(bar_df, x="Category", y="TDs/Game", title=f"{player_name} – Anytime TD"),
-                        use_container_width=True
-                    )
+                    bar_df = pd.DataFrame({"Category": ["Player TDs/Game", "Adj. vs Opponent"], "TDs/Game": [res["player_rate"], res["adj_rate"]]})
+                    st.plotly_chart(px.bar(bar_df, x="Category", y="TDs/Game", title=f"{player_name} – Anytime TD"), use_container_width=True)
                 else:
-                    # Option A display (season totals + games + per-game)
                     st.subheader(selected_prop.replace("_", " ").title())
                     st.write(f"**Season Total:** {res['season_total']:.1f}")
                     st.write(f"**Games Played:** {res['games_played']:.0f}")
                     st.write(f"**Per Game (season):** {res['player_pg']:.2f}")
-                    # Prediction & probabilities
                     st.write(f"**Adjusted prediction (this game):** {res['predicted_pg']:.2f}")
                     st.write(f"**Line:** {line_val:.1f}")
                     st.write(f"**Probability of OVER:** {res['prob_over']*100:.1f}%")
                     st.write(f"**Probability of UNDER:** {res['prob_under']*100:.1f}%")
-
                     st.plotly_chart(
-                        px.bar(
-                            x=["Predicted (this game)", "Line"],
-                            y=[res['predicted_pg'], line_val],
-                            title=f"{player_name} – {selected_prop.replace('_', ' ').title()}"
-                        ),
+                        px.bar(x=["Predicted (this game)", "Line"], y=[res['predicted_pg'], line_val], title=f"{player_name} – {selected_prop.replace('_', ' ').title()}"),
                         use_container_width=True
                     )
             else:
                 st.info("Select a player to evaluate props.")
 
 # -------------------------
-# Section 4: Parlay Builder (Any Player + Game Markets)
+# Section 4: Parlay Builder
 # -------------------------
 with st.expander("4) Parlay Builder (Players + Game Markets)", expanded=(selected_section == section_names[3])):
     if "parlay_legs" not in st.session_state:
-        st.session_state.parlay_legs = []  # each leg: dict(kind, label, prob, meta...)
+        st.session_state.parlay_legs = []
 
-    # ===== Add PLAYER leg (any opponent via full team) =====
     def unique_players(*dfs):
         names = []
         for df in dfs:
             if "player" in df.columns:
                 names.extend(list(df["player"].dropna().astype(str).unique()))
         return sorted(pd.unique(names))
+
+    # Use already-loaded player data from above to keep it fast
+    player_data = load_all_player_dfs()
+    p_rec, p_rush, p_pass = player_data["player_receiving"], player_data["player_rushing"], player_data["player_passing"]
+    d_rb, d_qb, d_wr, d_te = player_data["def_rb"], player_data["def_qb"], player_data["def_wr"], player_data["def_te"]
 
     all_players = unique_players(p_rec, p_rush, p_pass)
     full_team_names = sorted(list(CODE_TO_FULLNAME.values()))
@@ -740,8 +833,8 @@ with st.expander("4) Parlay Builder (Players + Game Markets)", expanded=(selecte
                     player_name=pb_player,
                     selected_prop=pb_prop,
                     line_val=pb_line,
-                    selected_team_key="SEL",   # placeholder; not used when override provided
-                    opponent_key="OPP",        # placeholder; not used when override provided
+                    selected_team_key="SEL",
+                    opponent_key="OPP",
                     p_rec=p_rec, p_rush=p_rush, p_pass=p_pass,
                     d_qb=d_qb, d_rb=d_rb, d_wr=d_wr, d_te=d_te,
                     opponent_key_override=pb_opp_key
@@ -755,24 +848,21 @@ with st.expander("4) Parlay Builder (Players + Game Markets)", expanded=(selecte
                     else:
                         prob = float(res["prob_over"] if pb_side == "over" else res["prob_under"])
                         label = f"{pb_player} {pb_prop.replace('_',' ').title()} {pb_side.title()} {pb_line} vs {pb_opp_full}"
-                    st.session_state.parlay_legs.append({
-                        "kind": "player",
-                        "label": label,
-                        "prob": prob
-                    })
+                    st.session_state.parlay_legs.append({"kind": "player", "label": label, "prob": prob})
                     st.rerun()
 
     st.markdown("---")
 
-    # ===== Add GAME MARKET leg (Totals or Spreads) =====
     st.markdown("**Add Game Market Leg**")
     g1, g2, g3, g4, g5, g6 = st.columns([1.0, 2.2, 1.6, 1.2, 1.2, 1.2])
     with g1:
         week_for_market = st.selectbox("Week", sorted(scores_df["week"].dropna().unique()), key="gm_week")
     with g2:
-        wk_df = scores_df[scores_df["week"] == week_for_market]
-        matchups = []
-        meta = []
+        wk_df = scores_df[scores_df["week"] == week_for_market].copy()
+        if "home_spread" not in wk_df.columns:
+            wk_df["home_spread"] = wk_df.apply(compute_home_spread, axis=1)
+
+        matchups, meta, home_spreads_for_match, ous_for_match = [], [], [], []
         for _, row in wk_df.iterrows():
             h = row.get("home_team")
             a = row.get("away_team")
@@ -780,23 +870,25 @@ with st.expander("4) Parlay Builder (Players + Game Markets)", expanded=(selecte
                 continue
             matchups.append(f"{a} @ {h}")
             meta.append((h, a))
+            home_spreads_for_match.append(float(row.get("home_spread")) if pd.notna(row.get("home_spread", np.nan)) else 0.0)
+            ous_for_match.append(float(row.get("over_under")) if pd.notna(row.get("over_under", np.nan)) else 45.0)
+
         gm_match = st.selectbox("Matchup", matchups, key="gm_matchup")
         idx = matchups.index(gm_match) if gm_match in matchups else -1
         home_team = meta[idx][0] if idx >= 0 else None
         away_team = meta[idx][1] if idx >= 0 else None
+        default_home_sp = home_spreads_for_match[idx] if idx >= 0 else 0.0
+        default_ou = ous_for_match[idx] if idx >= 0 else 45.0
     with g3:
         gm_market = st.selectbox("Market", ["Total", "Spread"], key="gm_market")
     with g4:
         if gm_market == "Total":
-            default_tot_line = float(wk_df.iloc[0].get("over_under", 45.0)) if not wk_df.empty else 45.0
-            gm_total = st.number_input("O/U Line", value=default_tot_line, step=0.5, key="gm_total_line")
+            gm_total = st.number_input("O/U Line", value=float(default_ou), step=0.5, key="gm_total_line")
             gm_side = st.selectbox("Side", ["over", "under"], key="gm_total_side")
         else:
-            default_sp_line = float(wk_df.iloc[0].get("spread", 0.0)) if not wk_df.empty else 0.0
-            gm_spread = st.number_input("Home Spread (negative=favorite)", value=default_sp_line, step=0.5, key="gm_spread_line")
+            gm_spread = st.number_input("Home-based Spread", value=float(default_home_sp), step=0.5, key="gm_spread_line")
             gm_side_spread = st.selectbox("Side", ["home", "away"], key="gm_spread_side")
     with g5:
-        # Preview model prob for convenience
         if gm_market == "Total" and home_team and away_team:
             _, p_over, p_under = prob_total_over_under(scores_df, home_team, away_team, gm_total)
             prev_prob = p_over if gm_side == "over" else p_under
@@ -818,16 +910,14 @@ with st.expander("4) Parlay Builder (Players + Game Markets)", expanded=(selecte
                 else:
                     _, p_cov = prob_spread_cover(scores_df, home_team, away_team, gm_spread, gm_side_spread)
                     prob = float(p_cov)
-                    side_text = f"{gm_side_spread.title()} Cover {gm_spread:+.1f}"
+                    if gm_side_spread == "home":
+                        side_text = f"{home_team} {gm_spread:+.1f}"
+                    else:
+                        side_text = f"{away_team} {(-gm_spread):+.1f}"
                     label = f"{away_team} @ {home_team} Spread {side_text}"
-                st.session_state.parlay_legs.append({
-                    "kind": "game",
-                    "label": label,
-                    "prob": prob
-                })
+                st.session_state.parlay_legs.append({"kind": "game", "label": label, "prob": prob})
                 st.rerun()
 
-    # Render legs with remove buttons
     if st.session_state.parlay_legs:
         st.subheader("Your Legs")
         for i, leg in enumerate(st.session_state.parlay_legs):
@@ -837,7 +927,6 @@ with st.expander("4) Parlay Builder (Players + Game Markets)", expanded=(selecte
                 st.session_state.parlay_legs.pop(i)
                 st.rerun()
 
-        # Parlay calculations
         probs = [float(leg.get("prob", 0.0)) for leg in st.session_state.parlay_legs]
         parlay_hit_prob = float(np.prod(probs)) if probs else 0.0
         model_dec_odds = prob_to_decimal(parlay_hit_prob)
@@ -852,7 +941,6 @@ with st.expander("4) Parlay Builder (Players + Game Markets)", expanded=(selecte
         with b3:
             st.metric("Model Parlay Prob.", f"{parlay_hit_prob*100:.1f}%")
 
-        # EV vs book
         if book_total_american.strip():
             try:
                 text = book_total_american.strip()
@@ -867,4 +955,4 @@ with st.expander("4) Parlay Builder (Players + Game Markets)", expanded=(selecte
         else:
             st.metric("Model Fair Odds", f"{int(model_am_odds):+d}")
     else:
-        st.info("Add legs above to build your parlay. You can mix player props and game markets. We'll multiply model probabilities for your parlay hit rate.")
+        st.info("Add legs above to build your parlay. Mix player props and game markets. We'll multiply probabilities for the parlay hit rate.")
