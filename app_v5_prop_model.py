@@ -469,7 +469,7 @@ def prob_spread_cover(scores_df: pd.DataFrame, home: str, away: str, home_spread
 # =========================
 # UI – Single Page
 # =========================
-st.title("🏈 The Officially un-official NFL Betting Model")
+st.title("🏈 The Official un-official NFL Betting Model")
 with st.expander("📘 How This Model Works", expanded=False):
     st.markdown("""
 **Welcome to the New Model Dashboard — Where Data Picks the Winners.**
