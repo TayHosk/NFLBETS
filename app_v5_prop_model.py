@@ -525,6 +525,37 @@ The model calculates the **true probability** and your **expected value** vs spo
 This dashboard is designed to give **clarity + confidence**.
 No noise. No confusion. Just **where the edge is** — and how strong it is. (This is not financial advice. Bet responsibly and stick to your units)
 """)
+with st.expander("📱 Add This App to Your Home Screen (Recommended)", expanded=False):
+    st.markdown("""
+**Make this dashboard feel like a real app on your phone.**
+No browser. No typing the link. Just tap & open like ESPN.
+
+---
+
+### **iPhone / iPad**
+1. Tap the **Share** icon (square with the arrow) at the bottom of Safari.
+2. Scroll down and tap **Add to Home Screen**.
+3. Name it **NFL Bets**.
+4. Tap **Add**.
+✅ Done — it now launches like a native app.
+
+---
+
+### **Android (Chrome)**
+1. Tap the **⋮** menu (three dots) in the top-right corner.
+2. Tap **Add to Home Screen**.
+3. Name it **NFL Bets**.
+4. Tap **Add**.
+✅ You're set.
+
+---
+
+### **Why Do This?**
+- Opens **full screen** (no browser bar)
+- Faster to access during games
+- Looks and feels like your personal **sports analytics app**
+
+""")
 scores_df = load_scores()
 if scores_df.empty:
     st.error("Could not load NFL game data.")
