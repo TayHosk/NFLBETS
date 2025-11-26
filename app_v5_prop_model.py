@@ -1,4 +1,3 @@
-
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -14,19 +13,17 @@ st.set_page_config(page_title="NFL Betting Model", layout="wide")
 SCORE_URL = "https://docs.google.com/spreadsheets/d/1KrTQbR5uqlBn2v2Onpjo6qHFnLlrqIQBzE52KAhMYcY/export?format=csv"
 TEAM_GAME_LOG_URL = "https://docs.google.com/spreadsheets/d/1PmVC_rWKdHNISbZHe0uQmv65d3fJx6vBtA2ydHl1qQA/export?format=csv"
 
-SHEETS = {
-    "total_offense": "https://docs.google.com/spreadsheets/d/1DFZRqOiMXbIoEeLaNaWh-4srxeWaXscqJxIAHt9yq48/export?format=csv",
-    "total_passing": "https://docs.google.com/spreadsheets/d/1QclB5ajymBsCC09j8s4Gie_bxj4ebJwEw4kihG6uCng/export?format=csv",
-    "total_rushing": "https://docs.google.com/spreadsheets/d/14NgUntobNrL1AZg3U85yZInArFkHyf9mi1csVFodu90/export?format=csv",
-    "total_scoring": "https://docs.google.com/spreadsheets/d/1SJ_Y1ljU44lOjbNHuXGyKGiF3mgQxjAjX8H3j-CCqSw/export?format=csv",
-    "player_receiving": "https://docs.google.com/spreadsheets/d/1Gwb2A-a4ge7UKHnC7wUpJltgioTuCQNuwOiC5ecZReM/export?format=csv",
-    "player_rushing": "https://docs.google.com/spreadsheets/d/1c0xpi_wZSf8VhkSPzzchxvhzAQHK0tFetakdRqb3e6k/export?format=csv",
-    "player_passing": "https://docs.google.com/spreadsheets/d/1I9YNSQMylW_waJs910q4S6SM8CZE--hsyNElrJeRfvk/export?format=csv",
-    "def_rb": "https://docs.google.com/spreadsheets/d/1xTP8tMnEVybu9vYuN4i6IIrI71q1j60BuqVC40fjNeY/export?format=csv",
-    "def_qb": "https://docs.google.com/spreadsheets/d/1SEwUdExz7Px61FpRNQX3bUsxVFtK97JzuQhTddVa660/export?format=csv",
-    "def_wr": "https://docs.google.com/spreadsheets/d/14klXrrHHCLlXhW6-F-9eJIz3dkp_ROXVSeehlM8TYAo/export?format=csv",
-    "def_te": "https://docs.google.com/spreadsheets/d/1yMpgtx1ObYLDVufTMR5Se3KrMi1rG6UzMzLcoptwhi4/export?format=csv",
-}
+# Season-long player stat sheets
+QB_STATS_URL = "https://docs.google.com/spreadsheets/d/1I9YNSQMylW_waJs910q4S6SM8CZE--hsyNElrJeRfvk/export?format=csv"
+WR_STATS_URL = "https://docs.google.com/spreadsheets/d/1Gwb2A-a4ge7UKHnC7wUpJltgioTuCQNuwOiC5ecZReM/export?format=csv"
+RB_STATS_URL = "https://docs.google.com/spreadsheets/d/11vYTC2o-WOOyN_oVuqq-hArgwdsPfvQWJWqiISK0bUg/export?format=csv"
+TE_STATS_URL = "https://docs.google.com/spreadsheets/d/1tAFG33Mh2WlDWAAobEJFbFS6A_7mdp0RjHanolrqTgs/export?format=csv"
+
+# Player game logs (every game this year)
+PLAYER_GAME_LOG_URL = "https://docs.google.com/spreadsheets/d/1iJNtTJcC3zv0Qvb7LxynF1tTPlggN8hOpQP-ROnPda8/export?format=csv"
+
+# How many recent games to use for trend vs season
+PROP_TREND_LAST_N = 2
 
 # =========================
 # Team alias map
@@ -49,11 +46,8 @@ TEAM_ALIAS_TO_CODE = {
     "jacksonville jaguars": "JAX", "jaguars": "JAX", "jacksonville": "JAX", "jax": "JAX", "jacs": "JAX",
     "kansas city chiefs": "KC", "chiefs": "KC", "kansas city": "KC", "kc": "KC",
     "las vegas raiders": "LV", "raiders": "LV", "las vegas": "LV", "lv": "LV",
-    "oakland raiders": "LV", "oakland": "LV",
     "los angeles chargers": "LAC", "la chargers": "LAC", "chargers": "LAC", "lac": "LAC",
-    "san diego chargers": "LAC", "san diego": "LAC",
     "los angeles rams": "LAR", "la rams": "LAR", "rams": "LAR", "lar": "LAR",
-    "st. louis rams": "LAR", "st louis rams": "LAR", "st louis": "LAR",
     "miami dolphins": "MIA", "dolphins": "MIA", "miami": "MIA", "mia": "MIA",
     "minnesota vikings": "MIN", "vikings": "MIN", "minnesota": "MIN", "min": "MIN",
     "new england patriots": "NE", "patriots": "NE", "new england": "NE", "ne": "NE",
@@ -67,7 +61,17 @@ TEAM_ALIAS_TO_CODE = {
     "tampa bay buccaneers": "TB", "buccaneers": "TB", "bucs": "TB", "tampa bay": "TB", "tb": "TB",
     "tennessee titans": "TEN", "titans": "TEN", "tennessee": "TEN", "ten": "TEN",
     "washington commanders": "WAS", "commanders": "WAS", "washington": "WAS", "was": "WAS", "wsh": "WAS",
-    "washington football team": "WAS", "redskins": "WAS"
+    "washington football team": "WAS", "redskins": "WAS",
+
+    # PFR-style 3-letter codes from your sheets
+    "nwe": "NE",
+    "gnb": "GB",
+    "kan": "KC",
+    "tam": "TB",
+    "nor": "NO",
+    "sfo": "SF",
+    "lvr": "LV",
+    "ram": "LAR",
 }
 CODE_TO_FULLNAME = {
     "ARI": "Arizona Cardinals","ATL": "Atlanta Falcons","BAL": "Baltimore Ravens","BUF": "Buffalo Bills",
@@ -82,10 +86,40 @@ CODE_TO_FULLNAME = {
 FULLNAME_TO_CODE = {v: k for k, v in CODE_TO_FULLNAME.items()}
 
 def team_key(name: str) -> str:
+    """
+    Normalize anything that looks like a team label (full name, standard abbr, PFR abbr, messy text)
+    into a clean code like 'GB', 'NE', 'KC', etc.
+    """
     if pd.isna(name):
         return ""
-    s = str(name).strip().lower()
-    return TEAM_ALIAS_TO_CODE.get(s, s)
+
+    s_raw = str(name).strip()
+    s_lower = s_raw.lower()
+
+    # 1) Direct lookup
+    if s_lower in TEAM_ALIAS_TO_CODE:
+        return TEAM_ALIAS_TO_CODE[s_lower]
+
+    # 2) Strip non-letters (handles things like 'GNB ' or 'GNB*')
+    s_clean = re.sub(r"[^a-z]", "", s_lower)
+    if s_clean in TEAM_ALIAS_TO_CODE:
+        return TEAM_ALIAS_TO_CODE[s_clean]
+
+    # 3) Handle comma-separated strings like "cin,cle" → first chunk
+    if "," in s_lower:
+        first = s_lower.split(",")[0].strip()
+        if first in TEAM_ALIAS_TO_CODE:
+            return TEAM_ALIAS_TO_CODE[first]
+        first_clean = re.sub(r"[^a-z]", "", first)
+        if first_clean in TEAM_ALIAS_TO_CODE:
+            return TEAM_ALIAS_TO_CODE[first_clean]
+
+    # 4) Fallback: if the cleaned 2–3 letter upper matches a known code, use it
+    cand = s_clean.upper()
+    if cand in CODE_TO_FULLNAME:
+        return cand
+
+    return cand  # stable "unknown"
 
 # =========================
 # Sidebar: Cache refresh
@@ -128,9 +162,8 @@ def consolidate_duplicate_columns(df, base_normalized):
     out.rename(columns={base_normalized + "_final": base_normalized}, inplace=True)
     return out
 
-# ----- Parsers (tailored to your exact labels) -----
+# ----- Parsers -----
 def parse_ou_result(val: str):
-    """Normalize to exactly 'over' or 'under' (no push use-case)."""
     if pd.isna(val):
         return None
     s = str(val).strip().lower()
@@ -141,16 +174,13 @@ def parse_ou_result(val: str):
     return None
 
 def parse_cover_result(val: str):
-    """Normalize to exactly 'covered' or 'did not cover' (no push)."""
     if pd.isna(val):
         return None
     s = str(val).strip().lower()
-    # direct match first
     if s in ["covered", "cover", "yes", "y", "w", "win", "won"]:
         return "covered"
     if s in ["did not cover", "didnt cover", "didn't cover", "no", "n", "l", "lose", "lost"]:
         return "did not cover"
-    # fuzzy
     if "cover" in s:
         return "did not cover" if ("not" in s or "did not" in s or "didn't" in s) else "covered"
     if "win" in s:
@@ -194,21 +224,78 @@ def load_scores() -> pd.DataFrame:
         df["home_spread"] = np.nan
     return df
 
-def load_and_clean(url: str) -> pd.DataFrame:
-    df = pd.read_csv(url)
-    df.columns = [normalize_header(c) for c in df.columns]
-    if "team" in df.columns:
-        df["team"] = df["team"].astype(str).str.strip()
-    elif "teams" in df.columns:
-        df["team"] = df["teams"].astype(str).str.strip()
-    else:
-        df["team"] = ""
-    df["team_key"] = df["team"].apply(team_key)
-    return df
-
 @st.cache_data(show_spinner=False)
 def load_all_player_dfs():
-    return {name: load_and_clean(url) for name, url in SHEETS.items()}
+    def load_player_sheet(url: str) -> pd.DataFrame:
+        df = pd.read_csv(url)
+        df.columns = [normalize_header(c) for c in df.columns]
+
+        if "player" in df.columns:
+            df["player"] = df["player"].astype(str).str.strip()
+        else:
+            df["player"] = ""
+
+        if "team" in df.columns:
+            df["team"] = df["team"].astype(str).str.strip()
+            df["team_key"] = df["team"].apply(team_key)
+        else:
+            df["team"] = ""
+            df["team_key"] = ""
+
+        for base in [
+            "games_played",
+            "yards_gained_by_passing",
+            "passing_yards_gained",
+            "rushing_yards_gained",
+            "receiving_yards",
+            "receptions",
+            "rushing_touchdowns",
+            "receiving_touchdowns",
+            "passing_touchdowns",
+            "pass_targets",
+            "rushing_attempts",
+        ]:
+            if any((c == base) or c.startswith(base + "_") for c in df.columns):
+                df = consolidate_duplicate_columns(df, base)
+
+        return df
+
+    qb = load_player_sheet(QB_STATS_URL)
+    wr = load_player_sheet(WR_STATS_URL)
+    rb = load_player_sheet(RB_STATS_URL)
+    te = load_player_sheet(TE_STATS_URL)
+
+    return {"qb": qb, "wr": wr, "rb": rb, "te": te}
+
+@st.cache_data(show_spinner=False)
+def load_player_game_log(url: str) -> pd.DataFrame:
+    df = pd.read_csv(url)
+    df.columns = [normalize_header(c) for c in df.columns]
+
+    # Normalize player/team/opponent/date
+    if "player" in df.columns:
+        df["player"] = df["player"].astype(str).str.strip()
+    else:
+        df["player"] = ""
+
+    if "team" in df.columns:
+        df["team"] = df["team"].astype(str).str.strip()
+        df["team_key"] = df["team"].apply(team_key)
+    else:
+        df["team"] = ""
+        df["team_key"] = ""
+
+    if "opponent" in df.columns:
+        df["opponent"] = df["opponent"].astype(str).str.strip()
+        df["opponent_key"] = df["opponent"].apply(team_key)
+    else:
+        df["opponent"] = ""
+        df["opponent_key"] = ""
+
+    if "date" in df.columns:
+        df["date"] = pd.to_datetime(df["date"], errors="coerce")
+
+    return df
 
 @st.cache_data(show_spinner=False)
 def load_team_game_log(url: str) -> pd.DataFrame:
@@ -218,12 +305,9 @@ def load_team_game_log(url: str) -> pd.DataFrame:
     df = raw.copy()
     df.columns = norm_cols
 
-    # Consolidate duplicate OU result headers if any
     df = consolidate_duplicate_columns(df, "over_under_result")
 
-    # Map canonical columns
     mapper = {}
-
     idx = find_col(norm_cols, ["team"])
     if idx is not None: mapper["team"] = df.columns[idx]
     idx = find_col(norm_cols, ["date"])
@@ -233,7 +317,6 @@ def load_team_game_log(url: str) -> pd.DataFrame:
     idx = find_col(norm_cols, ["week"])
     if idx is not None: mapper["week"] = df.columns[idx]
 
-    # "If Away Team it states: @. If home team it says nothing"
     idx = find_col(norm_cols, ["if_away_team_it_states", "if_away_team_it_states_if_home_team_it_says_nothing"], contains_ok=True)
     if idx is not None: mapper["home_away_flag"] = df.columns[idx]
 
@@ -248,19 +331,21 @@ def load_team_game_log(url: str) -> pd.DataFrame:
     idx = find_col(norm_cols, ["spread"])
     if idx is not None: mapper["spread"] = df.columns[idx]
 
-    # Exact header per your note: "Did they cover the spread"
     idx = find_col(norm_cols, ["did_they_cover_the_spread"], contains_ok=True)
     if idx is not None: mapper["cover_result"] = df.columns[idx]
 
-    # Your "Result" column (like "W, 24-20")
     idx = find_col(norm_cols, ["result"], contains_ok=True)
     if idx is not None: mapper["result"] = df.columns[idx]
+
+    # Defensive columns we'll use for props:
+    for c in ["passing_yards_gained_by_opposition", "rushing_yards_by_opposition", "rushing_attempts_by_opposition"]:
+        if c in df.columns:
+            mapper[c] = c
 
     out = pd.DataFrame()
     for k, col in mapper.items():
         out[k] = df[col]
 
-    # Normalize types
     if "date" in out.columns:
         out["date"] = pd.to_datetime(out["date"], errors="coerce")
     if "week" in out.columns:
@@ -270,18 +355,15 @@ def load_team_game_log(url: str) -> pd.DataFrame:
     if "spread" in out.columns:
         out["spread"] = pd.to_numeric(out["spread"], errors="coerce")
 
-    # Flags
     if "home_away_flag" in out.columns:
         out["is_away"] = out["home_away_flag"].fillna("").astype(str).str.contains("@")
     else:
         out["is_away"] = pd.NA
 
-    # Team/opponent keys
     out["team_key"] = out["team"].apply(team_key) if "team" in out.columns else ""
     if "opponent" in out.columns:
         out["opponent_key"] = out["opponent"].apply(team_key)
 
-    # Parse OU + cover results into exact labels you want
     if "ou_result" in out.columns:
         out["ou_result_norm"] = out["ou_result"].apply(parse_ou_result)
     if "cover_result" in out.columns:
@@ -315,7 +397,7 @@ def team_log_summary(team_log_df: pd.DataFrame, team_abbr: str, last_n:int=0):
     if team_log_df is None or team_log_df.empty:
         return {"ou_over":0,"ou_under":0,"cover_yes":0,"cover_no":0,"games":0}
     sub = team_log_df.copy()
-    sub = sub[sub.get("team","") == team_abbr]
+    sub = sub[sub.get("team_key","") == team_abbr]
     if "date" in sub.columns:
         sub = sub.sort_values("date")
     if last_n and last_n > 0:
@@ -342,80 +424,136 @@ def ou_adjustment_from_rates(team_log_df, home_abbr, away_abbr, weight_points: f
         tot = s["ou_over"] + s["ou_under"]
         if tot == 0:
             return 0.0
-        return (s["ou_over"]/tot) - 0.5  # positive => tends to OVER
+        return (s["ou_over"]/tot) - 0.5
     adj_home = rate(home_abbr) * weight_points
     adj_away = rate(away_abbr) * weight_points
-    # combine both tendencies into a single total adjustment
     return (adj_home + adj_away) / 2.0
 
 def spread_adjustment_from_rates(team_log_df, home_abbr, away_abbr, weight_points: float=3.0, last_n:int=0):
-    # Positive -> nudges margin toward that team
     def bias(team):
         s = team_log_summary(team_log_df, team, last_n=last_n)
         tot = s["cover_yes"] + s["cover_no"]
         if tot == 0:
             return 0.0
-        return (s["cover_yes"]/tot) - 0.5  # positive means covers more than 50%
+        return (s["cover_yes"]/tot) - 0.5
     home_bias = bias(home_abbr) * weight_points
     away_bias = bias(away_abbr) * weight_points
-    # Margin is home - away. If away has strong cover tendency, nudge margin down.
     return home_bias - away_bias
 
-# ===== Player prop helpers (kept same structure) =====
-def find_player_in(df: pd.DataFrame, player_name: str):
-    if "player" not in df.columns:
+# ===== Player prop helpers =====
+def find_player_across_sheets(
+    player_name: str,
+    qb_df: pd.DataFrame,
+    wr_df: pd.DataFrame,
+    rb_df: pd.DataFrame,
+    te_df: pd.DataFrame,
+):
+    name = str(player_name).strip().lower()
+    for df, pos in [(qb_df, "qb"), (rb_df, "rb"), (wr_df, "wr"), (te_df, "te")]:
+        if "player" not in df.columns:
+            continue
+        mask = df["player"].astype(str).str.lower() == name
+        if mask.any():
+            return df[mask].copy(), pos
+    return None, None
+
+def get_games_played(row: pd.Series) -> float:
+    if "games_played" in row.index and pd.notna(row["games_played"]):
+        try:
+            return float(row["games_played"])
+        except Exception:
+            pass
+    return 1.0
+
+def prop_stat_candidates(selected_prop: str):
+    """
+    Column candidates for BOTH season sheets and game-log sheet.
+    """
+    if selected_prop == "passing_yards":
+        return ["yards_gained_by_passing", "passing_yards_gained"]
+    elif selected_prop == "rushing_yards":
+        return ["rushing_yards_gained"]
+    elif selected_prop == "receiving_yards":
+        return ["receiving_yards"]
+    elif selected_prop == "receptions":
+        # Season sheet: 'receptions'; game log: 'pass_receptions'
+        return ["receptions", "pass_receptions"]
+    elif selected_prop == "targets":
+        # Season: 'pass_targets'; in case of typo, also 'pass_targetes'
+        return ["pass_targets", "pass_targetes"]
+    elif selected_prop == "carries":
+        return ["rushing_attempts"]
+    return []
+
+def get_stat_value_for_prop(row: pd.Series, selected_prop: str):
+    for c in prop_stat_candidates(selected_prop):
+        if c in row.index and pd.notna(row[c]):
+            try:
+                return float(row[c])
+            except Exception:
+                continue
+    return None
+
+def player_recent_avg(player_game_log_df: pd.DataFrame, player_name: str, selected_prop: str, last_n: int):
+    """
+    Average stat over last N games from the game-log sheet.
+    """
+    if player_game_log_df is None or player_game_log_df.empty:
         return None
-    mask = df["player"].astype(str).str.lower() == str(player_name).lower()
-    return df[mask].copy() if mask.any() else None
+    name = str(player_name).strip().lower()
+    sub = player_game_log_df[player_game_log_df["player"].astype(str).str.lower() == name].copy()
+    if sub.empty:
+        return None
+    if "date" in sub.columns:
+        sub = sub.sort_values("date")
+    if last_n and last_n > 0:
+        sub = sub.tail(last_n)
+    if sub.empty:
+        return None
 
-def detect_stat_col(df: pd.DataFrame, prop: str):
-    cols = list(df.columns); norm = [normalize_header(c) for c in cols]
-    mapping = {
-        "rushing_yards": ["rushing_yards_total","rushing_yards_per_game"],
-        "receiving_yards": ["receiving_yards_total","receiving_yards_per_game"],
-        "passing_yards": ["passing_yards_total","passing_yards_per_game"],
-        "receptions": ["receiving_receptions_total"],
-        "targets": ["receiving_targets_total"],
-        "carries": ["rushing_attempts_total","rushing_carries_per_game"],
-    }
-    pri = mapping.get(prop, [])
-    for cand in pri:
-        if cand in norm:
-            return cols[norm.index(cand)]
-    for i, c in enumerate(norm):
-        if prop.split("_")[0] in c and ("per_game" in c or "total" in c):
-            return cols[i]
+    for c in prop_stat_candidates(selected_prop):
+        if c in sub.columns:
+            try:
+                return float(pd.to_numeric(sub[c], errors="coerce").mean())
+            except Exception:
+                continue
     return None
 
-def pick_def_df(prop: str, pos: str, d_qb, d_rb, d_wr, d_te):
-    if prop == "passing_yards":
-        return d_qb
-    if prop in ["rushing_yards","carries"]:
-        return d_rb if pos != "qb" else d_qb
-    if prop in ["receiving_yards","receptions","targets"]:
-        if pos == "te":
-            return d_te
-        if pos == "rb":
-            return d_rb
-        return d_wr
-    return None
+def get_def_factor(team_log_df: pd.DataFrame, def_team_key: str, selected_prop: str):
+    """
+    How friendly is the defense for this stat vs league average?
+    >1.0 = good matchup, <1.0 = tough matchup.
+    """
+    if team_log_df is None or team_log_df.empty or not def_team_key:
+        return 1.0
 
-def detect_def_col(def_df: pd.DataFrame, prop: str):
-    cols = list(def_df.columns); norm = [normalize_header(c) for c in cols]
-    prefs = []
-    if prop in ["rushing_yards","carries"]:
-        prefs = ["rushing_yards_allowed_total","rushing_yards_allowed"]
-    elif prop in ["receiving_yards","receptions","targets"]:
-        prefs = ["receiving_yards_allowed_total","receiving_yards_allowed"]
-    elif prop == "passing_yards":
-        prefs = ["passing_yards_allowed_total","passing_yards_allowed"]
-    for cand in prefs:
-        if cand in norm:
-            return cols[norm.index(cand)]
-    for i, nc in enumerate(norm):
-        if "allowed" in nc:
-            return cols[i]
-    return None
+    if selected_prop in ["passing_yards", "receiving_yards", "receptions", "targets"]:
+        col = "passing_yards_gained_by_opposition"
+    elif selected_prop in ["rushing_yards", "carries"]:
+        col = "rushing_yards_by_opposition"
+    else:
+        return 1.0
+
+    if col not in team_log_df.columns:
+        return 1.0
+
+    df = team_log_df.copy()
+    df[col] = pd.to_numeric(df[col], errors="coerce")
+
+    league_allowed_pg = df[col].mean(skipna=True)
+    if not np.isfinite(league_allowed_pg) or league_allowed_pg <= 0:
+        return 1.0
+
+    opp_rows = df[df["team_key"] == def_team_key]
+    if opp_rows.empty:
+        return 1.0
+
+    opp_allowed_pg = opp_rows[col].mean(skipna=True)
+    if not np.isfinite(opp_allowed_pg) or opp_allowed_pg <= 0:
+        return 1.0
+
+    factor = opp_allowed_pg / league_allowed_pg
+    return float(np.clip(factor, 0.4, 1.6))
 
 def prop_prediction_and_probs(
     player_name: str,
@@ -423,115 +561,79 @@ def prop_prediction_and_probs(
     line_val: float,
     selected_team_key: str,
     opponent_key: str,
-    p_rec: pd.DataFrame,
-    p_rush: pd.DataFrame,
-    p_pass: pd.DataFrame,
-    d_qb: pd.DataFrame,
-    d_rb: pd.DataFrame,
-    d_wr: pd.DataFrame,
-    d_te: pd.DataFrame,
-    opponent_key_override: str = None
+    qb_df: pd.DataFrame,
+    wr_df: pd.DataFrame,
+    rb_df: pd.DataFrame,
+    te_df: pd.DataFrame,
+    player_game_log_df: pd.DataFrame,
+    team_log_df: pd.DataFrame,
+    last_n_games: int = PROP_TREND_LAST_N,
 ):
-    def pick_player_df(prop):
-        if prop in ["receiving_yards","receptions","targets"]:
-            return p_rec, "wr"
-        if prop in ["rushing_yards","carries"]:
-            return p_rush, "rb"
-        if prop == "passing_yards":
-            return p_pass, "qb"
-        return p_rec, "wr"
+    """
+    - Season per-game from QB/WR/RB/TE sheets
+    - Trend from last N games (player_game_log_df)
+    - Defensive adjustment from TEAM_GAME_LOG_URL (team_log_df)
+    """
+    player_df, pos = find_player_across_sheets(player_name, qb_df, wr_df, rb_df, te_df)
+    if player_df is None or player_df.empty:
+        return {"error": "Player not found in any of the QB/WR/RB/TE tables."}
 
+    row = player_df.iloc[0]
+    games_played = get_games_played(row)
+
+    # Anytime TD special case
     if selected_prop == "anytime_td":
-        rec_row = find_player_in(p_rec, player_name)
-        rush_row = find_player_in(p_rush, player_name)
-        total_tds = 0.0; total_games = 0.0
-        for df_ in [rec_row, rush_row]:
-            if df_ is not None and not df_.empty:
-                td_cols = [c for c in df_.columns if "td" in c and "allowed" not in c]
-                games_col = "games_played" if "games_played" in df_.columns else None
-                if td_cols and games_col:
-                    tds = sum(float(df_.iloc[0][col]) for col in td_cols if pd.notna(df_.iloc[0][col]))
-                    total_tds += tds
-                    total_games = max(total_games, float(df_.iloc[0][games_col]))
-        if total_games == 0:
+        td_total = 0.0
+        for c in ["rushing_touchdowns", "receiving_touchdowns", "passing_touchdowns"]:
+            if c in row.index and pd.notna(row[c]):
+                try:
+                    td_total += float(row[c])
+                except Exception:
+                    continue
+
+        if games_played <= 0 or td_total <= 0:
             return {"error": "No touchdown data found for this player."}
-        def_dfs = [d_rb.copy(), d_wr.copy(), d_te.copy()]
-        for d in def_dfs:
-            if "games_played" not in d.columns:
-                d["games_played"] = 1
-            td_cols = [c for c in d.columns if "td" in c and "allowed" in c]
-            if len(td_cols) == 0:
-                d["tds_pg"] = np.nan
-            else:
-                d["tds_pg"] = d[td_cols].sum(axis=1) / d["games_played"].replace(0, np.nan)
-            if "team_key" not in d.columns:
-                d["team_key"] = d["team"].apply(team_key)
-        league_td_pg = np.nanmean([d["tds_pg"].mean() for d in def_dfs if "tds_pg" in d.columns])
-        player_team_key = None
-        for df_ in [p_rec, p_rush, p_pass]:
-            row_ = find_player_in(df_, player_name)
-            if row_ is not None and not row_.empty:
-                tk = row_.iloc[0].get("team_key", "")
-                if tk:
-                    player_team_key = tk
-                    break
-        if not player_team_key:
-            player_team_key = selected_team_key
-        opp_key_for_player = opponent_key_override if opponent_key_override else (opponent_key if player_team_key == selected_team_key else selected_team_key)
-        opp_td_list = []
-        for d in def_dfs:
-            mask = d["team_key"] == opp_key_for_player
-            val = d.loc[mask, "tds_pg"].mean()
-            opp_td_list.append(val)
-        opp_td_pg = np.nanmean(opp_td_list)
-        if np.isnan(opp_td_pg) or league_td_pg is None or np.isnan(league_td_pg) or league_td_pg <= 0:
-            adj_factor = 1.0
-        else:
-            adj_factor = opp_td_pg / league_td_pg
-        adj_td_rate = (total_tds / total_games) * adj_factor
-        prob_anytime = 1 - np.exp(-adj_td_rate)
+
+        td_rate = td_total / games_played
+        prob_anytime = 1 - np.exp(-td_rate)
         prob_anytime = float(np.clip(prob_anytime, 0.0, 1.0))
-        return {"prob_anytime": prob_anytime, "adj_rate": adj_td_rate, "player_rate": (total_tds/total_games)}
 
-    player_df_source, fallback_pos = pick_player_df(selected_prop)
-    this_player_df = find_player_in(player_df_source, player_name)
-    if this_player_df is None or this_player_df.empty:
-        return {"error": "Player not found in the selected stat table."}
+        return {
+            "prob_anytime": prob_anytime,
+            "td_rate": td_rate,
+            "td_total": td_total,
+            "games_played": games_played,
+        }
 
-    player_pos = this_player_df.iloc[0].get("position", fallback_pos)
-    stat_col = detect_stat_col(this_player_df, selected_prop)
-    if not stat_col:
-        return {"error": "No matching stat column found for this prop."}
+    # Season total + per-game
+    season_total = get_stat_value_for_prop(row, selected_prop)
+    if season_total is None:
+        return {"error": "No matching stat column found for this prop in the season sheets."}
 
-    season_val = float(this_player_df.iloc[0][stat_col]) if pd.notna(this_player_df.iloc[0][stat_col]) else 0.0
-    games_played = float(this_player_df.iloc[0].get("games_played", 1)) or 1.0
-    player_pg = season_val / games_played if games_played > 0 else 0.0
+    season_pg = season_total / games_played if games_played > 0 else 0.0
 
-    def_df = pick_def_df(selected_prop, player_pos, d_qb, d_rb, d_wr, d_te)
-    def_col = detect_def_col(def_df, selected_prop) if def_df is not None else None
+    # Recent trend (last N games)
+    recent_pg = player_recent_avg(player_game_log_df, player_name, selected_prop, last_n_games)
+    if recent_pg is None or season_pg <= 0:
+        trend_factor = 1.0
+    else:
+        trend_factor = float(np.clip(recent_pg / season_pg, 0.4, 1.8))
 
-    player_team_key = str(this_player_df.iloc[0].get("team_key", "")).strip()
-    opp_key_for_player = opponent_key_override if opponent_key_override else (opponent_key if player_team_key == selected_team_key else selected_team_key)
-
-    opp_allowed_pg = None; league_allowed_pg = None
-    if def_df is not None and def_col is not None:
-        if "team_key" not in def_df.columns:
-            def_df["team_key"] = def_df["team"].apply(team_key)
-        if "games_played" in def_df.columns:
-            league_allowed_pg = (def_df[def_col] / def_df["games_played"].replace(0, np.nan)).mean()
+    # Determine which team is the defense in this context
+    player_team_key = str(row.get("team_key", "")).strip()
+    if selected_team_key:
+        if player_team_key and player_team_key == selected_team_key:
+            def_team_key = opponent_key
         else:
-            league_allowed_pg = def_df[def_col].mean()
-        opp_row = def_df[def_df["team_key"] == opp_key_for_player]
-        if not opp_row.empty:
-            if "games_played" in opp_row.columns and float(opp_row.iloc[0]["games_played"]) > 0:
-                opp_allowed_pg = float(opp_row.iloc[0][def_col]) / float(opp_row.iloc[0]["games_played"])
-            else:
-                opp_allowed_pg = float(opp_row.iloc[0][def_col])
-        else:
-            opp_allowed_pg = league_allowed_pg
+            def_team_key = selected_team_key
+    else:
+        # In generic contexts (parlay builder), we only know the opponent explicitly
+        def_team_key = opponent_key
 
-    adj_factor = (opp_allowed_pg / league_allowed_pg) if (league_allowed_pg and league_allowed_pg > 0) else 1.0
-    predicted_pg = player_pg * adj_factor
+    def_factor = get_def_factor(team_log_df, def_team_key, selected_prop)
+
+    overall_adj_factor = trend_factor * def_factor
+    predicted_pg = season_pg * overall_adj_factor
 
     stdev = max(3.0, predicted_pg * 0.35)
     z = (line_val - predicted_pg) / stdev
@@ -542,9 +644,15 @@ def prop_prediction_and_probs(
         "predicted_pg": predicted_pg,
         "prob_over": prob_over,
         "prob_under": prob_under,
-        "player_pg": player_pg,
-        "season_total": season_val,
-        "games_played": games_played
+        "season_pg": season_pg,
+        "recent_pg": recent_pg,
+        "season_total": season_total,
+        "games_played": games_played,
+        "trend_factor": trend_factor,
+        "def_factor": def_factor,
+        "overall_adj_factor": overall_adj_factor,
+        "player_team_key": player_team_key,
+        "def_team_key": def_team_key,
     }
 
 # Odds + market helpers
@@ -581,7 +689,7 @@ def prob_total_over_under(scores_df: pd.DataFrame, home: str, away: str, line_to
 
 def prob_spread_cover(scores_df: pd.DataFrame, home: str, away: str, home_spread: float, side: str):
     home_pts, away_pts = predict_scores(scores_df, home, away)
-    pred_margin = home_pts - away_pts  # home - away
+    pred_margin = home_pts - away_pts
     stdev_margin = max(5.0, abs(pred_margin) * 0.9 + 6.0)
     line_margin = -home_spread
     z = (line_margin - pred_margin) / stdev_margin
@@ -596,17 +704,12 @@ st.title("🏈 The Official un-official NFL Betting Model")
 
 with st.expander("📘 How This Model Works", expanded=False):
     st.markdown("""
-**Welcome to the New Model Dashboard — Where Data Picks the Winners.**
-
-We project team scoring using historical efficiency and calibrate to league scoring,
-then compare to Vegas lines to find edges on totals and spreads. Player props layer
-in opponent-allowed adjustments.
-
-Use **Team Log Adjustments** to blend in this season's tendencies from the Team Game Log.
-
-**Tooltips you'll see below:**
-- **O/U tendency weight**: converts each team's share of *Over* results into a points bump (or drop) applied to the **total**. If a team has gone Over 70% (i.e., +20% vs a 50/50 baseline) and the slider is set to 4.0, that team's contribution is +0.8 points. Both teams' contributions are averaged.
-- **Cover tendency weight**: converts each team's cover rate into a points bump to the **margin** (home minus away). If the home team covers 60% (+10% vs 50%) and the weight is 3.0, the margin is nudged +0.3. The away team's bias subtracts from this.
+- Team projections: based on historical scoring, calibrated to league averages.
+- Player props:
+  - Season per-game → baseline.
+  - **Last 2 games** → form/trend factor.
+  - **Opponent defense** (yards allowed this year) → matchup factor.
+  - Adjusted prediction = Season PG × Trend Factor × Defense Factor.
 """)
 
 with st.expander("📱 Add This App to Your Home Screen (Recommended)", expanded=False):
@@ -621,9 +724,12 @@ if scores_df.empty:
     st.stop()
 
 player_data = load_all_player_dfs()
-p_rec, p_rush, p_pass = player_data["player_receiving"], player_data["player_rushing"], player_data["player_passing"]
-d_rb, d_qb, d_wr, d_te = player_data["def_rb"], player_data["def_qb"], player_data["def_wr"], player_data["def_te"]
+qb_df = player_data["qb"]
+wr_df = player_data["wr"]
+rb_df = player_data["rb"]
+te_df = player_data["te"]
 
+player_game_log_df = load_player_game_log(PLAYER_GAME_LOG_URL)
 team_log_df = load_team_game_log(TEAM_GAME_LOG_URL)
 
 section_names = [
@@ -651,9 +757,9 @@ with st.expander("1) Game Selection + Prediction", expanded=(selected_section ==
         )
         selected_team = st.selectbox("Team", teams_in_week, key="sec1_team")
 
-    game_row = scores_df[\
-        ((scores_df["home_team"] == selected_team) | (scores_df["away_team"] == selected_team))\
-        & (scores_df["week"] == selected_week)\
+    game_row = scores_df[
+        ((scores_df["home_team"] == selected_team) | (scores_df["away_team"] == selected_team))
+        & (scores_df["week"] == selected_week)
     ]
     if game_row.empty:
         st.warning("No game found for that team/week.")
@@ -675,32 +781,26 @@ with st.expander("1) Game Selection + Prediction", expanded=(selected_section ==
         with cR:
             home_spread_val = st.number_input("Home-based Spread (home team perspective)", value=default_home_spread, step=0.5, key="sec1_spread")
 
-        # --- Base model ---
         base_home_pts, base_away_pts = predict_scores(scores_df, home_team, away_team)
         base_total = base_home_pts + base_away_pts
         base_margin = base_home_pts - base_away_pts
 
-        # --- Optional Team Log Adjustments ---
         st.markdown("### Team Log Adjustments")
         use_adj = st.checkbox(
             "Blend in this season's O/U & Cover tendencies from the Team Game Log",
             value=True,
-            help="Uses the Team Game Log sheet to calculate each team's historical O/U and spread-cover tendencies, then converts those into point adjustments for the total and margin."
         )
         last_n_for_adj = st.number_input(
             "Use last N games for adjustments (0 = all)",
             min_value=0, value=0, step=1,
-            help="Set to 0 to use the whole season; otherwise only the most recent N games are used for the tendencies."
         )
         ou_weight = st.slider(
             "O/U tendency weight (± points to total at extremes)",
             0.0, 8.0, 4.0, 0.5,
-            help="Translates a team's Over-vs-Under bias into a bump to the predicted total. Example: if a team has 70% Overs (+20% over 50/50) and this slider is 4.0, that team's contribution is +0.8 points. Home/away contributions are averaged."
         )
         spread_weight = st.slider(
             "Cover tendency weight (± points to margin at extremes)",
             0.0, 6.0, 3.0, 0.5,
-            help="Translates each team's cover rate into a bump to the predicted margin (home minus away). Example: if the home team covers 60% (+10% vs 50%) and weight=3.0, margin nudges +0.3. The away team's bias subtracts from this."
         )
 
         adj_total = base_total
@@ -713,7 +813,6 @@ with st.expander("1) Game Selection + Prediction", expanded=(selected_section ==
             adj_total = base_total + total_bump
             adj_margin = base_margin + margin_bump
 
-        # Convert adjusted total/margin back to team scores
         adj_home_pts = max(0.0, (adj_total + adj_margin) / 2.0)
         adj_away_pts = max(0.0, (adj_total - adj_margin) / 2.0)
 
@@ -821,9 +920,9 @@ with st.expander("3) Player Props", expanded=(selected_section == section_names[
     else:
         selected_team = st.session_state['sec1_team']
         selected_week = st.session_state['sec1_week']
-        game_row = scores_df[\
-            ((scores_df["home_team"] == selected_team) | (scores_df["away_team"] == selected_team))\
-            & (scores_df["week"] == selected_week)\
+        game_row = scores_df[
+            ((scores_df["home_team"] == selected_team) | (scores_df["away_team"] == selected_team))
+            & (scores_df["week"] == selected_week)
         ]
         if game_row.empty:
             st.warning("No game found for that team/week.")
@@ -831,22 +930,58 @@ with st.expander("3) Player Props", expanded=(selected_section == section_names[
             g = game_row.iloc[0]
             opponent = g["away_team"] if g["home_team"] == selected_team else g["home_team"]
 
-            def players_for_team(df, team_name_or_label):
-                key = team_key(team_name_or_label)
-                if "team_key" not in df.columns or "player" not in df.columns:
+            def players_for_team(df: pd.DataFrame, team_name_or_label: str):
+                """
+                Extra-forgiving mapping so Packers (GNB / GB) etc always work.
+                """
+                if "player" not in df.columns:
                     return []
-                mask = df["team_key"] == key
-                return list(df.loc[mask, "player"].dropna().unique())
+                key = team_key(team_name_or_label)
+
+                if "team_key" in df.columns:
+                    mask = df["team_key"] == key
+                else:
+                    mask = pd.Series(False, index=df.index)
+
+                if mask.any():
+                    return list(df.loc[mask, "player"].dropna().unique())
+
+                # PFR mapping fallback
+                pfr_from_std = {
+                    "NE": "NWE",
+                    "GB": "GNB",
+                    "KC": "KAN",
+                    "TB": "TAM",
+                    "NO": "NOR",
+                    "SF": "SFO",
+                    "LV": "LVR",
+                    "LAR": "RAM",
+                }
+                df_team_upper = df.get("team", pd.Series("", index=df.index)).astype(str).str.upper()
+
+                if key in pfr_from_std:
+                    pfr_code = pfr_from_std[key]
+                    mask_pfr = df_team_upper == pfr_code
+                    if mask_pfr.any():
+                        return list(df.loc[mask_pfr, "player"].dropna().unique())
+
+                mask_std = df_team_upper == key
+                if mask_std.any():
+                    return list(df.loc[mask_std, "player"].dropna().unique())
+
+                return []
 
             team_players = set(
-                players_for_team(p_rec, selected_team) +
-                players_for_team(p_rush, selected_team) +
-                players_for_team(p_pass, selected_team)
+                players_for_team(qb_df, selected_team)
+                + players_for_team(rb_df, selected_team)
+                + players_for_team(wr_df, selected_team)
+                + players_for_team(te_df, selected_team)
             )
             opp_players = set(
-                players_for_team(p_rec, opponent) +
-                players_for_team(p_rush, opponent) +
-                players_for_team(p_pass, opponent)
+                players_for_team(qb_df, opponent)
+                + players_for_team(rb_df, opponent)
+                + players_for_team(wr_df, opponent)
+                + players_for_team(te_df, opponent)
             )
             both_players = sorted(team_players.union(opp_players))
 
@@ -870,8 +1005,13 @@ with st.expander("3) Player Props", expanded=(selected_section == section_names[
                     line_val=line_val,
                     selected_team_key=team_key(selected_team),
                     opponent_key=team_key(opponent),
-                    p_rec=p_rec, p_rush=p_rush, p_pass=p_pass,
-                    d_qb=d_qb, d_rb=d_rb, d_wr=d_wr, d_te=d_te
+                    qb_df=qb_df,
+                    wr_df=wr_df,
+                    rb_df=rb_df,
+                    te_df=te_df,
+                    player_game_log_df=player_game_log_df,
+                    team_log_df=team_log_df,
+                    last_n_games=PROP_TREND_LAST_N,
                 )
 
                 if "error" in res:
@@ -879,19 +1019,33 @@ with st.expander("3) Player Props", expanded=(selected_section == section_names[
                 elif selected_prop == "anytime_td":
                     st.subheader("Anytime TD Probability")
                     st.write(f"Estimated Anytime TD Probability: **{res['prob_anytime']*100:.1f}%**")
-                    bar_df = pd.DataFrame({"Category": ["Player TDs/Game", "Adj. vs Opponent"], "TDs/Game": [res["player_rate"], res["adj_rate"]]})
-                    st.plotly_chart(px.bar(bar_df, x="Category", y="TDs/Game", title=f"{player_name} – Anytime TD"), use_container_width=True)
+                    bar_df = pd.DataFrame({"Category": ["TDs/Game"], "Value": [res["td_rate"]]})
+                    st.plotly_chart(px.bar(bar_df, x="Category", y="Value", title=f"{player_name} – Anytime TD"), use_container_width=True)
                 else:
                     st.subheader(selected_prop.replace("_", " ").title())
                     st.write(f"**Season Total:** {res['season_total']:.1f}")
                     st.write(f"**Games Played:** {res['games_played']:.0f}")
-                    st.write(f"**Per Game (season):** {res['player_pg']:.2f}")
+                    st.write(f"**Per Game (season):** {res['season_pg']:.2f}")
+                    if res["recent_pg"] is not None:
+                        st.write(f"**Last {PROP_TREND_LAST_N} games (avg):** {res['recent_pg']:.2f}")
+                    st.write(f"**Trend factor (last {PROP_TREND_LAST_N} vs season):** {res['trend_factor']:.3f}")
+                    st.write(f"**Defense factor (vs {opponent}):** {res['def_factor']:.3f}")
+                    st.write(f"**Overall adjustment factor:** {res['overall_adj_factor']:.3f}")
                     st.write(f"**Adjusted prediction (this game):** {res['predicted_pg']:.2f}")
                     st.write(f"**Line:** {line_val:.1f}")
                     st.write(f"**Probability of OVER:** {res['prob_over']*100:.1f}%")
                     st.write(f"**Probability of UNDER:** {res['prob_under']*100:.1f}%")
                     st.plotly_chart(
-                        px.bar(x=["Predicted (this game)", "Line"], y=[res['predicted_pg'], line_val], title=f"{player_name} – {selected_prop.replace('_', ' ').title()}"),
+                        px.bar(
+                            x=["Season PG", f"Last {PROP_TREND_LAST_N} PG", "Adjusted Prediction", "Line"],
+                            y=[
+                                res["season_pg"],
+                                res["recent_pg"] if res["recent_pg"] is not None else 0.0,
+                                res["predicted_pg"],
+                                line_val,
+                            ],
+                            title=f"{player_name} – {selected_prop.replace('_', ' ').title()}",
+                        ),
                         use_container_width=True
                     )
             else:
@@ -911,7 +1065,7 @@ with st.expander("4) Parlay Builder (Players + Game Markets)", expanded=(selecte
                 names.extend(list(df["player"].dropna().astype(str).unique()))
         return sorted(pd.unique(names))
 
-    all_players = unique_players(p_rec, p_rush, p_pass)
+    all_players = unique_players(qb_df, wr_df, rb_df, te_df)
     full_team_names = sorted(list(CODE_TO_FULLNAME.values()))
 
     st.markdown("**Add Player Prop Leg**")
@@ -941,11 +1095,15 @@ with st.expander("4) Parlay Builder (Players + Game Markets)", expanded=(selecte
                     player_name=pb_player,
                     selected_prop=pb_prop,
                     line_val=pb_line,
-                    selected_team_key="SEL",
-                    opponent_key="OPP",
-                    p_rec=p_rec, p_rush=p_rush, p_pass=p_pass,
-                    d_qb=d_qb, d_rb=d_rb, d_wr=d_wr, d_te=d_te,
-                    opponent_key_override=pb_opp_key
+                    selected_team_key="",  # generic context
+                    opponent_key=pb_opp_key,
+                    qb_df=qb_df,
+                    wr_df=wr_df,
+                    rb_df=rb_df,
+                    te_df=te_df,
+                    player_game_log_df=player_game_log_df,
+                    team_log_df=team_log_df,
+                    last_n_games=PROP_TREND_LAST_N,
                 )
                 if "error" in res:
                     st.warning(res["error"])
@@ -1085,7 +1243,6 @@ with st.expander("5) Team Game Log & Trends (NEW)", expanded=(selected_section =
             sub = team_log_df.copy()
             sub = sub[sub["team"] == pick_team]
 
-            # Day filter
             if day_filter != "All" and "day" in sub.columns:
                 sub = sub[sub["day"].astype(str).str.lower() == day_filter.lower()]
 
@@ -1094,13 +1251,12 @@ with st.expander("5) Team Game Log & Trends (NEW)", expanded=(selected_section =
             if last_n and last_n > 0:
                 sub = sub.tail(last_n)
 
-            # ----- Metrics with your exact labels -----
             ou_over = ou_under = ou_total = 0
             if "ou_result_norm" in sub.columns:
                 vals = sub["ou_result_norm"].dropna().astype(str).str.lower()
                 ou_over = (vals == "over").sum()
                 ou_under = (vals == "under").sum()
-                ou_total = (vals.isin(["over","under"])).sum()  # no pushes by design
+                ou_total = (vals.isin(["over","under"])).sum()
             cover_yes = cover_no = cover_total = 0
             if "cover_result_norm" in sub.columns:
                 cvals = sub["cover_result_norm"].dropna().astype(str).str.lower()
@@ -1119,7 +1275,6 @@ with st.expander("5) Team Game Log & Trends (NEW)", expanded=(selected_section =
                 pct_cover = (cover_yes / cover_total * 100.0) if cover_total else 0.0
                 st.metric("Spread Cover %", f"{pct_cover:.1f}%", f"{cover_yes}/{cover_total} covered")
 
-            # By-day breakdown chart (using 'over'/'under' only)
             if "day" in team_log_df.columns and "ou_result_norm" in team_log_df.columns:
                 day_data = team_log_df[team_log_df["team"] == pick_team].copy()
                 day_data = day_data[day_data["ou_result_norm"].isin(["over","under"])]
@@ -1130,7 +1285,6 @@ with st.expander("5) Team Game Log & Trends (NEW)", expanded=(selected_section =
                                  barmode="group")
                     st.plotly_chart(fig, use_container_width=True)
 
-            # Recent games table (now including 'Result')
             show_cols = []
             label_map = []
             if "date" in sub.columns: show_cols.append("date"); label_map.append("Date")
